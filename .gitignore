@@ -1,0 +1,7 @@
+# 忽略Python的缓存文件
+__pycache__/
+*.pyc
+
+docker-compose.yaml
+# 配置文件
+core/config.py

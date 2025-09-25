@@ -1,0 +1,21 @@
+class Config:
+    """
+    用于统一管理Cookie和服务器设置。
+    """
+    # -- 服务器设置 --
+    HOST = '0.0.0.0'
+    PORT = 5000
+    DEBUG_MODE = True
+
+    # 访问密钥
+    API_SECRET_KEY = ""
+    # -- 网易云音乐 Cookie --
+    # 更新为您提供的值
+    NETEASE_COOKIE_STR = 'MUSIC_U=;os=pc;appver=appver=2.9.5.199424;'
+
+    # -- QQ音乐 Cookie --
+    QQ_COOKIE_DICT = {
+        "uin": "",
+        "qqmusic_key": "",
+        "qm_keyst": ""
+    }
