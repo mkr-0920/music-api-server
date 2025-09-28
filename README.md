@@ -25,7 +25,7 @@
   无论数据来自哪个平台，均返回一致的 JSON 格式，便于前端调用。
 
 - **API 密钥保护**  
-  所有接口均需通过 `X-API-Key` 请求头认证，保障私有服务安全。
+  接口通过 `X-API-Key` 请求头认证，保障私有服务安全。
 
 ---
 
@@ -59,8 +59,8 @@ nano core/config.py
 | 配置项             | 说明                         |
 |--------------------|------------------------------|
 | `API_SECRET_KEY`   | 用于 API 认证的密钥           |
-| `QQ_MUSIC_COOKIE`  | QQ音乐登录 Cookie（用于爬取） |
-| `NETEASE_COOKIE`   | 网易云音乐 Cookie（可选）     |
+| `QQ_USER_CONFIG`  | QQ音乐相关配置 |
+| `NETEASE_COOKIE_STR`   | 网易云音乐 Cookies     |
 | `MUSIC_DIRECTORY`  | 本地音乐文件存储路径          |
 
 > 💡 建议使用虚拟环境隔离依赖（见下一步）
