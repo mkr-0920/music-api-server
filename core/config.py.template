@@ -9,13 +9,20 @@ class Config:
 
     # 访问密钥
     API_SECRET_KEY = ""
-    # -- 网易云音乐 Cookie --
-    # 更新为您提供的值
-    NETEASE_COOKIE_STR = 'MUSIC_U=;os=pc;appver=appver=2.9.5.199424;'
 
-    # -- QQ音乐 Cookie --
-    QQ_COOKIE_DICT = {
+    # -- 网易云音乐 Cookie --
+    NETEASE_COOKIE_STR = 'MUSIC_U=;os=pc;appver=9.9.9;;'
+
+    # -- QQ音乐 用户配置 --
+    # 包含了刷新Cookie所需的所有信息
+    QQ_USER_CONFIG = {
         "uin": "",
         "qqmusic_key": "",
-        "qm_keyst": ""
+        "qm_keyst": "",  # 这个通常与qqmusic_key相同，但保留以备用
+        "refresh_token": "" # 新增 refresh_token 字段
     }
+
+    # --- 本地音乐API配置 ---
+    MUSIC_DIRECTORY = "/path/to/music"
+    DATABASE_FILE = "music_library.db"
+

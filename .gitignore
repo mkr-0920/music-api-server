@@ -3,5 +3,7 @@ __pycache__/
 *.pyc
 
 docker-compose.yaml
-# 配置文件
 core/config.py
+music_library.db
+scanner.log
+test.txt
