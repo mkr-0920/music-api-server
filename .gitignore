@@ -1,7 +1,8 @@
-# 忽略Python的缓存文件
 __pycache__/
 *.pyc
+config
 
+download_errors_qq.log
 docker-compose.yaml
 core/config.py
 music_library.db

@@ -52,48 +52,89 @@ def index():
 def handle_netease_request():
     song_id = request.args.get('id')
     keyword = request.args.get('q')
-    album = request.args.get('album') # 获取可选的专辑参数
-    level = request.args.get('level', 'hires') # 默认音质为hires
+    album_search = request.args.get('album')
+    level = request.args.get('level', 'hires')
+    playlist_id = request.args.get('playlist_id')
+    album_id = request.args.get('album_id')
 
-    if song_id:
+    if playlist_id:
+        # 调用“启动器”函数，它会立即返回
+        netease_api.start_background_playlist_download(playlist_id, level)
+        # 立即返回“任务已接受”响应
+        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"歌单 {playlist_id} 已加入后台下载队列。"}})
+    
+    elif album_id:
+        # 调用“启动器”函数，它会立即返回
+        netease_api.start_background_album_download(album_id, level)
+        # 立即返回“任务已接受”响应
+        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"专辑 {album_id} 已加入后台下载队列。"}})
+
+    elif song_id:
         data = netease_api.get_song_details(song_id, level)
     elif keyword:
-        # 调用新的搜索并获取详情函数
-        data = netease_api.search_and_get_details(keyword, level, album)
+        data = netease_api.search_and_get_details(keyword, level, album_search)
     else:
-        return jsonify({"code": 400, "message": "必须提供 'id' 或 'q' 参数。"}), 400
+        return jsonify({"code": 400, "message": "必须提供 'id', 'q', 'playlist_id' 或 'album_id' 参数之一。"}), 400
 
     if "error" in data:
         return jsonify({"code": 404, "message": data["error"]}), 404
+    
     return jsonify({"code": 200, "message": "成功", "data": data})
+
 
 @app.route('/api/qq', methods=['GET'])
 @require_api_key
 def handle_qq_request():
     """
     处理来自QQ音乐的请求。
-    支持通过 'mid' 直接获取详情，或通过 'q' (关键词) 和可选的 'album' (专辑)进行搜索。
+    支持通过 'playlist_id' 或 'album_id' 触发后台批量下载。
+    也支持通过 'mid' 直接获取详情，或通过 'q' (关键词) 和可选的 'album' (专辑)进行搜索。
     """
+    # --- 1. 获取所有可能的参数 ---
     song_mid = request.args.get('mid')
+    song_id = request.args.get('id')
     keyword = request.args.get('q')
-    album = request.args.get('album') # 新增：获取album参数
+    album_search = request.args.get('album') # 用于搜索过滤的 'album'
+    
+    playlist_id = request.args.get('playlist_id') # 歌单ID参数
+    album_id = request.args.get('album_id')       # 专辑ID参数
+    
+    # level 参数在此处仅为保持API格式统一，QQ后端逻辑会自动下载所有可用音质
+    level = request.args.get('level', 'master') 
 
-    # 优先处理 mid 参数
-    if song_mid:
-        data = qq_api.get_song_details(song_mid)
-    # 如果没有 mid，再处理 q 参数
+    # --- 2. 【核心修改】根据参数优先级处理请求 ---
+    
+    # 优先处理批量下载任务
+    if playlist_id:
+        # 调用异步启动器，此函数会立即返回
+        qq_api.start_background_playlist_download(playlist_id, level)
+        # 立刻返回“任务已接受”响应，不阻塞
+        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"歌单 {playlist_id} 已加入后台下载队列。"}})
+    
+    elif album_id:
+        # 调用异步启动器，此函数会立即返回
+        qq_api.start_background_album_download(album_id, level)
+        # 立刻返回“任务已接受”响应，不阻塞
+        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"专辑 {album_id} 已加入后台下载队列。"}})
+
+    # --- 3. 如果没有批量任务，则执行原有的单个查询逻辑 ---
+    
+    data = None
+    if song_id or song_mid:
+        data = qq_api.get_song_details(song_mid=song_mid, song_id=song_id)
     elif keyword:
-        # 修改：将album参数传递给后端的API方法
-        data = qq_api.search_and_get_details(keyword, album=album)
-    # 如果两个参数都没有，则返回错误
+        data = qq_api.search_and_get_details(keyword, album=album_search)
     else:
-        return jsonify({"code": 400, "message": "必须提供 'mid' 或 'q' (关键词) 参数。"}), 400
+        # 更新错误信息，告知用户所有可用参数
+        return jsonify({"code": 400, "message": "必须提供 'mid', 'q', 'playlist_id' 或 'album_id' 参数之一。"}), 400
     
     # 统一处理返回结果
     if data and "error" in data:
         return jsonify({"code": 404, "message": data["error"]}), 404
     
     return jsonify({"code": 200, "message": "成功", "data": data})
+
+
 
 @app.route('/api/kuwo', methods=['GET'])
 @require_api_key
@@ -172,4 +213,5 @@ if __name__ == '__main__':
 
     print(f"服务器启动于 http://{Config.HOST}:{Config.PORT}")
     app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG_MODE)
+
 
