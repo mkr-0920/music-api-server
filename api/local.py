@@ -1,3 +1,4 @@
+import re
 import sqlite3
 
 class LocalMusicAPI:
@@ -24,6 +25,36 @@ class LocalMusicAPI:
             print(f"本地音乐数据库查询出错: {e}")
             return None
 
+    def _normalize_album_title(self, title: str) -> str:
+        """
+        一个简单的专辑标题标准化函数，用于模糊匹配。
+        - 转为小写
+        - 移除所有非字母、非数字、非中文字符（保留基础匹配项）
+        - 简单的中文数字转阿拉伯数字
+        """
+        if not title:
+            return ""
+        
+        # 1. 转为小写
+        normalized_title = title.lower()
+
+        # 2. 定义一个简单的映射来处理用户示例中的数字转换
+        # 注意：这个实现比较简单，仅用于处理“十”和“十一”到“十九”这类常见情况
+        num_map = {
+            '十一': '11', '十二': '12', '十三': '13', '十四': '14', '十五': '15',
+            '十六': '16', '十七': '17', '十八': '18', '十九': '19', '十': '10',
+            '九': '9', '八': '8', '七': '7', '六': '6', '五': '5',
+            '四': '4', '三': '3', '二': '2', '一': '1'
+        }
+        for cn_num, an_num in num_map.items():
+            normalized_title = normalized_title.replace(cn_num, an_num)
+
+        # 3. 移除所有非字母、非数字、非中文字符，以忽略特殊版本标记（如 "special edition"）
+        # [^a-z0-9\u4e00-\u9fa5] 匹配任何不是小写字母、数字或中文字符的字符
+        normalized_title = re.sub(r'[^a-z0-9\u4e00-\u9fa5]', '', normalized_title)
+
+        return normalized_title
+
     def add_song_to_db(self, search_key, file_path, duration, album, quality):
         """向数据库中添加一条新的歌曲记录"""
         try:
@@ -43,15 +74,34 @@ class LocalMusicAPI:
             print(f"后台任务: 写入数据库时发生错误: {e}")
             return False
 
+
     def get_existing_qualities(self, search_key: str, album: str = None) -> list:
-        """获取本地库中某首歌曲已存在的所有音质版本"""
-        if album:
-            # 指定专辑时，只查找该专辑下的音质版本
-            results = self._query_db('SELECT quality FROM songs WHERE search_key = ? AND album = ?', (search_key, album))
-        else:
-            # 未指定专辑时，查找所有匹配歌曲的音质版本
+        """
+        获取本地库中某首歌曲已存在的所有音质版本 (支持模糊专辑匹配)。
+        """
+        if not album:
+            # 如果没有提供专辑名，则使用原有的精确匹配逻辑
             results = self._query_db('SELECT quality FROM songs WHERE search_key = ?', (search_key,))
-        return [row[0] for row in results] if results else []
+            return [row[0] for row in results] if results else []
+
+        # 1. 获取该 search_key 对应的所有歌曲版本
+        all_versions = self._query_db('SELECT quality, album FROM songs WHERE search_key = ?', (search_key,))
+        if not all_versions:
+            return []
+
+        # 2. 标准化输入的专辑名以进行比较
+        normalized_input_album = self._normalize_album_title(album)
+
+        # 3. 遍历数据库结果，进行标准化比较
+        matching_qualities = []
+        for quality, db_album in all_versions:
+            normalized_db_album = self._normalize_album_title(db_album)
+            # 如果标准化后的专辑名匹配，则记录该音质
+            if normalized_input_album == normalized_db_album:
+                matching_qualities.append(quality)
+                
+        # 返回去重后的音质列表
+        return list(set(matching_qualities))
 
     def search_song(self, search_key: str, album: str | None = None, quality: str | None = None) -> list | None:
         """根据 '歌手 - 歌名', 可选专辑和可选音质进行搜索，统一返回列表格式"""
