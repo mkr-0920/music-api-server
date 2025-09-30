@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>音乐分享链接解析器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+        }
+        .card {
+            background-color: white;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: all 0.3s ease;
+        }
+        .btn-primary:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(118, 75, 162, 0.4);
+        }
+        .loader {
+            border-top-color: #667eea;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .tab-btn {
+            transition: all 0.2s ease-in-out;
+        }
+        .tab-btn.active {
+            color: #667eea;
+            border-color: #667eea;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <div class="card w-full max-w-2xl p-8 space-y-6">
+        <div class="text-center">
+            <h1 class="text-3xl font-bold text-gray-800">全能音乐解析器</h1>
+            <p class="text-gray-500 mt-2">支持通过分享链接或关键词进行解析和下载。</p>
+        </div>
+        
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-200">
+            <button id="tabLink" class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent active">链接解析</button>
+            <button id="tabSearch" class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent">关键词搜索</button>
+        </div>
+
+        <div class="space-y-4">
+            <div>
+                <label for="apiKey" class="text-sm font-medium text-gray-700">API 密钥 (X-API-Key)</label>
+                <input type="password" id="apiKey" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="请输入您的 API 密钥">
+            </div>
+
+            <!-- Link Parser View -->
+            <div id="viewLink">
+                <label for="musicUrl" class="text-sm font-medium text-gray-700">音乐分享链接</label>
+                <input type="text" id="musicUrl" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="粘贴分享链接...">
+            </div>
+
+            <!-- Keyword Search View -->
+            <div id="viewSearch" class="hidden space-y-4">
+                 <div>
+                    <label for="platform" class="text-sm font-medium text-gray-700">选择平台</label>
+                    <select id="platform" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="netease">网易云音乐</option>
+                        <option value="qq">QQ音乐</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="keyword" class="text-sm font-medium text-gray-700">关键词</label>
+                    <input type="text" id="keyword" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="格式: 歌手 - 歌曲名">
+                </div>
+                <div>
+                    <label for="album" class="text-sm font-medium text-gray-700">专辑 (可选)</label>
+                    <input type="text" id="album" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="填写专辑名可提高匹配精度">
+                </div>
+            </div>
+        </div>
+
+        <button id="submitBtn" class="w-full btn-primary text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:shadow-outline flex items-center justify-center">
+            <span id="btnText">解析链接</span>
+            <div id="loader" class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-6 w-6 ml-3 hidden"></div>
+        </button>
+        
+        <div id="result" class="mt-6"></div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const apiKeyInput = document.getElementById('apiKey');
+        const musicUrlInput = document.getElementById('musicUrl');
+        const submitBtn = document.getElementById('submitBtn');
+        const resultDiv = document.getElementById('result');
+        const btnText = document.getElementById('btnText');
+        const loader = document.getElementById('loader');
+
+        // Tab Elements
+        const tabLink = document.getElementById('tabLink');
+        const tabSearch = document.getElementById('tabSearch');
+        const viewLink = document.getElementById('viewLink');
+        const viewSearch = document.getElementById('viewSearch');
+        
+        // Search View Elements
+        const platformSelect = document.getElementById('platform');
+        const keywordInput = document.getElementById('keyword');
+        const albumInput = document.getElementById('album');
+
+        let activeTab = 'link'; // 'link' or 'search'
+
+        // Event Listeners
+        tabLink.addEventListener('click', () => switchTab('link'));
+        tabSearch.addEventListener('click', () => switchTab('search'));
+        submitBtn.addEventListener('click', handleSubmit);
+
+        function switchTab(tabName) {
+            activeTab = tabName;
+            if (tabName === 'link') {
+                tabLink.classList.add('active');
+                tabSearch.classList.remove('active');
+                viewLink.classList.remove('hidden');
+                viewSearch.classList.add('hidden');
+                btnText.textContent = '解析链接';
+            } else {
+                tabLink.classList.remove('active');
+                tabSearch.classList.add('active');
+                viewLink.classList.add('hidden');
+                viewSearch.classList.remove('hidden');
+                btnText.textContent = '搜索歌曲';
+            }
+        }
+
+        function showLoading(isLoading) {
+            loader.classList.toggle('hidden', !isLoading);
+            submitBtn.disabled = isLoading;
+            btnText.textContent = isLoading ? (activeTab === 'link' ? '正在解析...' : '正在搜索...') : (activeTab === 'link' ? '解析链接' : '搜索歌曲');
+        }
+
+        function displayResult(htmlContent) {
+            resultDiv.innerHTML = htmlContent;
+        }
+
+        function parseUrl(url) {
+            try {
+                const urlObj = new URL(url);
+                const params = urlObj.searchParams;
+
+                if (url.includes('music.163.com')) {
+                    if (url.includes('/album')) return { platform: 'netease', type: 'album', id: params.get('id') };
+                    if (url.includes('/playlist')) return { platform: 'netease', type: 'playlist', id: params.get('id') };
+                    if (url.includes('/song')) return { platform: 'netease', type: 'song', id: params.get('id') };
+                }
+
+                if (url.includes('y.qq.com')) {
+                    if (url.includes('album.html') || url.includes('albumDetail')) return { platform: 'qq', type: 'album', id: params.get('albummid') || url.split('/').pop() };
+                    if (url.includes('taoge.html')) return { platform: 'qq', type: 'playlist', id: params.get('id') };
+                    if (url.includes('playsong.html')) return { platform: 'qq', type: 'song', id: params.get('songid') };
+                }
+                
+                if (url.includes('c6.y.qq.com')) {
+                     return { error: '检测到QQ音乐短链接，请在浏览器中打开它，然后复制跳转后的长链接再试。' };
+                }
+
+                return null;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        async function handleSubmit() {
+            const apiKey = apiKeyInput.value.trim();
+            if (!apiKey) {
+                displayResult(`<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert"><strong>错误:</strong> 请输入您的 API 密钥。</div>`);
+                return;
+            }
+            
+            showLoading(true);
+            displayResult('');
+            let apiUrl = '';
+
+            if (activeTab === 'link') {
+                const url = musicUrlInput.value.trim();
+                if (!url) {
+                    displayResult(`<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert"><strong>错误:</strong> 请输入音乐分享链接。</div>`);
+                    showLoading(false);
+                    return;
+                }
+                
+                const parsed = parseUrl(url);
+                if (!parsed) {
+                    displayResult(`<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert"><strong>错误:</strong> 无法识别的链接格式。</div>`);
+                    showLoading(false);
+                    return;
+                }
+                if (parsed.error) {
+                    displayResult(`<div class="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded-lg" role="alert"><strong>提示:</strong> ${parsed.error}</div>`);
+                    showLoading(false);
+                    return;
+                }
+
+                if (parsed.platform === 'qq') {
+                    if (parsed.type === 'album') apiUrl = `/api/qq?album_id=${parsed.id}`;
+                    if (parsed.type === 'playlist') apiUrl = `/api/qq?playlist_id=${parsed.id}`;
+                    if (parsed.type === 'song') apiUrl = `/api/qq?song_id=${parsed.id}`;
+                } else if (parsed.platform === 'netease') {
+                    if (parsed.type === 'album') apiUrl = `/api/netease?album_id=${parsed.id}`;
+                    if (parsed.type === 'playlist') apiUrl = `/api/netease?playlist_id=${parsed.id}`;
+                    if (parsed.type === 'song') apiUrl = `/api/netease?id=${parsed.id}`;
+                }
+            } else { // Search Tab
+                const platform = platformSelect.value;
+                const keyword = keywordInput.value.trim();
+                const album = albumInput.value.trim();
+
+                if (!keyword) {
+                    displayResult(`<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert"><strong>错误:</strong> 请输入搜索关键词。</div>`);
+                    showLoading(false);
+                    return;
+                }
+
+                const encodedKeyword = encodeURIComponent(keyword);
+                if (platform === 'qq') {
+                    apiUrl = `/api/qq?q=${encodedKeyword}`;
+                } else { // netease
+                    apiUrl = `/api/netease?q=${encodedKeyword}`;
+                }
+
+                if (album) {
+                    apiUrl += `&album=${encodeURIComponent(album)}`;
+                }
+            }
+
+
+            try {
+                const response = await fetch(apiUrl, { headers: { 'X-API-Key': apiKey } });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.message || `服务器返回错误 ${response.status}`);
+                }
+                
+                if (response.status === 202) {
+                    displayResult(`<div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-lg" role="alert"><strong class="font-bold">任务已接受!</strong><span class="block sm:inline"> ${data.data.message}</span></div>`);
+                } 
+                else if (response.status === 200) {
+                    const song = data.data;
+                    const audioUrl = song.urls?.flac || song.urls?.master || song.urls?.['320'] || song.urls?.['128'] || song.url;
+                    
+                    displayResult(`
+                        <div class="card p-6 flex flex-col md:flex-row items-center space-y-4 md:space-y-0 md:space-x-6">
+                            <img src="${song.cover_url || song.album?.picUrl}" alt="专辑封面" class="w-32 h-32 rounded-lg shadow-md object-cover">
+                            <div class="flex-1 text-center md:text-left min-w-0">
+                                <h2 class="text-2xl font-bold text-gray-800 truncate">${song.name}</h2>
+                                <p class="text-gray-600 text-lg truncate">${song.artist || song.ar?.map(a => a.name).join(' / ')}</p>
+                                <p class="text-gray-500 truncate">${song.album_name || song.album?.name}</p>
+                                ${audioUrl ? `
+                                <audio controls class="w-full mt-4">
+                                    <source src="${audioUrl}">
+                                    您的浏览器不支持音频播放。
+                                </audio>` : `
+                                <p class="text-red-500 mt-4 font-semibold">抱歉，未找到可播放的音频链接。</p>
+                                `}
+                            </div>
+                        </div>
+                    `);
+                }
+            } catch (error) {
+                displayResult(`<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert"><strong>操作失败:</strong> ${error.message}</div>`);
+            } finally {
+                showLoading(false);
+            }
+        }
+    </script>
+</body>
+</html>
+
