@@ -1,23 +1,29 @@
+# --- 1. 标准库导入 ---
 import os
-import requests
 import json
 import re
-from opencc import OpenCC
+import base64
+import datetime
 import threading
 import urllib.parse
 from hashlib import md5
 from random import randrange
+import time
 
-# 导入mutagen库
+# --- 2. 第三方库导入 ---
+import requests
+from opencc import OpenCC
+
+# mutagen (处理音乐元数据)
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3, APIC, USLT, TIT2, TPE1, TALB
+from mutagen.id3 import ID3, APIC, USLT, TIT2, TPE1, TALB, TPE2, TDRC, TRCK, TYER, TPOS, TCON, TPUB, TDOR
 from mutagen.flac import FLAC, Picture
 
-# For NetEase Music Encryption
+# cryptography (处理网易云加密)
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-# 从我们自己的工具模块中导入Utils类
+# --- 3. 您自己的模块导入 ---
 from utils.helpers import Utils
 
 class APIConstants:
@@ -29,6 +35,10 @@ class APIConstants:
     SONG_DETAIL_V3 = "https://interface3.music.163.com/api/v3/song/detail"
     LYRIC_API = "https://interface3.music.163.com/api/song/lyric"
     SEARCH_API = "https://interface.music.163.com/eapi/cloudsearch/pc"
+    PLAYLIST_DETAIL_API = 'https://music.163.com/api/v6/playlist/detail'
+    ALBUM_DETAIL_API = 'https://music.163.com/api/v1/album/'
+    ALBUM_V3_DETAIL = "https://music.163.com/eapi/album/v3/detail"
+    CACHE_KEY_AES_KEY = b')(13daqP@ssw0rd~'
 
 class NeteaseMusicAPI:
     def __init__(self, cookie_str: str, local_api_instance, music_directory: str):
@@ -42,6 +52,7 @@ class NeteaseMusicAPI:
             "hires": "hires", "jyeffect": "jyeffect", "sky": "sky",
             "jymaster": "master"
         }
+        self.album_cache = {}
 
     def _eapi_encrypt(self, url_path: str, payload: dict) -> dict:
         digest = md5(f"nobody{url_path}use{json.dumps(payload)}md5forencrypt".encode('utf-8')).hexdigest()
@@ -52,18 +63,69 @@ class NeteaseMusicAPI:
         encryptor = cipher.encryptor()
         encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
         return {'params': encrypted_data.hex().upper()}
+        
+    def _eapi_decrypt(self, encrypted_bytes: bytes) -> str:
+        # EAPI 响应使用的主密钥
+        AES_KEY = b"e82ckenh8dichen8"
+        
+        try:
+            cipher = Cipher(algorithms.AES(AES_KEY), modes.ECB())
+            decryptor = cipher.decryptor()
+            unpadder = padding.PKCS7(algorithms.AES(AES_KEY).block_size).unpadder()
+
+            decrypted_padded_data = decryptor.update(encrypted_bytes) + decryptor.finalize()
+            unpadded_data = unpadder.update(decrypted_padded_data) + unpadder.finalize()
+            
+            return unpadded_data.decode('utf-8')
+        except Exception as e:
+            raise ValueError(f"EAPI 响应解密失败: {e}")
+
+    def _generate_cache_key(self, params: dict) -> str:
+        # 1. 按照 key 的第一个字母的 code point 排序
+        sorted_keys = sorted(params.keys(), key=lambda k: ord(k[0]))
+        
+        # 2. 连接成 query string
+        query_string = "&".join([f"{k}={params[k]}" for k in sorted_keys])
+        
+        # 3. 使用 AES-128-ECB 加密 (cryptography 实现)
+        cipher = Cipher(algorithms.AES(APIConstants.CACHE_KEY_AES_KEY), modes.ECB())
+        encryptor = cipher.encryptor()
+        padder = padding.PKCS7(algorithms.AES(APIConstants.CACHE_KEY_AES_KEY).block_size).padder()
+
+        padded_data = padder.update(query_string.encode('utf-8')) + padder.finalize()
+        encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+        
+        # 4. Base64 编码
+        cache_key = base64.b64encode(encrypted_data).decode('utf-8')
+        return cache_key
 
     def _post_request(self, url: str, data: dict, is_eapi=False):
         try:
+            # 加密请求体（如果需要）
             if is_eapi:
                 url_path = urllib.parse.urlparse(url).path.replace("/eapi/", "/api/")
                 data = self._eapi_encrypt(url_path, data)
+
             response = requests.post(url, headers=self.headers, cookies=self.cookies, data=data, timeout=20)
             response.raise_for_status()
-            if not response.text: return None
-            return response.json()
-        except (requests.RequestException, json.JSONDecodeError) as e:
-            print(f"网易云请求或JSON解析出错: {e}")
+
+            if not response.content:
+                return None
+
+            if is_eapi:
+                try:
+                    # 优先尝试直接解析JSON，处理未加密的eapi响应
+                    return response.json()
+                except json.JSONDecodeError:
+                    # 如果直接解析失败，则认为响应是加密的，执行解密
+                    decrypted_text = self._eapi_decrypt(response.content)
+                    return json.loads(decrypted_text)
+            else:
+                # 非eapi请求，行为不变
+                return response.json()
+
+        except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
+            print(f"网易云请求或处理出错: {e}")
             return None
 
     def _get_song_url_data(self, song_id: str, level: str, meta_info: dict):
@@ -84,47 +146,177 @@ class NeteaseMusicAPI:
         
     def _get_song_metadata(self, song_id: str):
         data = {'c': json.dumps([{"id": song_id, "v": 0}])}
-        return self._post_request(APIConstants.SONG_DETAIL_V3, data)
+        response = self._post_request(APIConstants.SONG_DETAIL_V3, data)
+        # print(f"song_data: {response}")
+        return response
         
     def _get_lyric_data(self, song_id: str):
-        data = {'id': song_id, 'lv': -1, 'kv': -1, 'tv': -1}
+        # 这是一套基于较新API调用整理的、更完整的参数
+        data = {'id': song_id, 'cp': 'false', 'tv': '0', 'lv': '0', 'rv': '0', 'kv': '0'}
         return self._post_request(APIConstants.LYRIC_API, data)
-    
-    def _embed_metadata(self, file_path: str, song_info: dict, lyric: str, tlyric: str):
+
+    def _get_album_details_by_id(self, album_id: str) -> dict:
+        """
+        【最终版】使用正确的 URL 参数 和 POST Body 调用 /eapi/album/v3/detail 接口，
+        以获取最可靠的专辑详情。
+        """
+        if not album_id:
+            return None
+            
         try:
+            # 1. 准备用于生成 cache_key 的参数
+            params_for_cache_key = {
+                'id': str(album_id),
+                'e_r': 'true'
+            }
+
+            # 2. 生成 cache_key
+            cache_key = self._generate_cache_key(params_for_cache_key)
+            
+            # 3. 构造最终的 URL，将 cache_key 作为 GET 参数
+            final_url = f"{APIConstants.ALBUM_V3_DETAIL}?cache_key={urllib.parse.quote(cache_key)}"
+            
+            # 4. 构造最终的 eapi 请求体 (POST Body)
+            #    根据您的解密结果，我们只需要一个最小化的 header 即可
+            eapi_payload = {
+                "id": str(album_id),
+                "e_r": "true",
+                "header": json.dumps(APIConstants.DEFAULT_CONFIG) # 使用您代码中已有的默认header
+            }
+
+            # 5. 使用您已有的 _post_request 方法发送加密请求
+            response_json = self._post_request(final_url, eapi_payload, is_eapi=True)
+
+            if response_json and response_json.get('code') == 200:
+                print(f">>> 从 eapi 专辑接口 (ID: {album_id}) 获取到详情。")
+                return response_json.get('album')
+            else:
+                 print(f">>> 警告: 查询 eapi 专辑接口 (ID: {album_id}) 失败: {response_json}")
+
+        except Exception as e:
+            print(f">>> 警告: 调用 eapi 专辑接口 (ID: {album_id}) 时发生异常: {e}")
+            
+        return None
+
+
+    def _embed_metadata(self, file_path: str, song_info: dict, lyric: str, tlyric: str):
+        """
+        将丰富的元数据嵌入到下载的音乐文件中
+        """
+        try:
+            # --- 1. 提取元数据 ---
+            album_info = song_info.get('al', {})
+            artists = song_info.get('ar', [])
             song_name = song_info.get('name')
-            album_name = song_info.get('al', {}).get('name')
-            artist_names = ";".join([artist['name'] for artist in song_info.get('ar', [])])
+            album_name = album_info.get('name')
+            album_id = str(album_info.get('id'))
+            
+            artist_names = ";".join([artist['name'] for artist in artists])
+            track_number = song_info.get('no')
+            total_tracks = album_info.get('size')
+            disc_number = song_info.get('cd')
+
+            # --- 2. 通过专辑接口获取并应用权威元数据 ---
+            album_details = self.album_cache.get(album_id)
+            if album_details is None and album_id not in self.album_cache:
+                album_details = self._get_album_details_by_id(album_id)
+                self.album_cache[album_id] = album_details
+
+            if album_details:
+                album_artist = album_details.get('artist', {}).get('name', artist_names)
+                publisher = album_details.get('company')
+                publish_time_ms = album_details.get('publishTime', 0)
+            else:
+                album_artists_list = album_info.get('ar', artists)
+                album_artist = ";".join([artist['name'] for artist in album_artists_list])
+                publisher = album_info.get('company')
+                publish_time_ms = album_info.get('publishTime', 0)
+            
+            # 日期处理
+            release_date_str, release_year_str = None, None
+            if publish_time_ms and publish_time_ms > 0:
+                dt_object = datetime.datetime.fromtimestamp(publish_time_ms / 1000)
+                release_date_str = dt_object.strftime('%Y-%m-%d')
+                release_year_str = dt_object.strftime('%Y')
+
+            # --- 3. 歌词、封面处理和文件写入 ---
+            full_lyric = f"{lyric}\n\n--- 翻译 ---\n\n{tlyric}" if tlyric and lyric else lyric
             image_data = None
-            if song_info.get('al', {}).get('picUrl'):
+            if album_info.get('picUrl'):
                 try:
-                    image_response = requests.get(song_info['al']['picUrl'], timeout=30)
-                    if image_response.status_code == 200: image_data = image_response.content
-                except requests.RequestException: pass
-            full_lyric = f"{lyric}\n\n--- 翻译 ---\n\n{tlyric}" if tlyric else lyric
+                    image_response = requests.get(album_info['picUrl'], timeout=30)
+                    if image_response.status_code == 200:
+                        image_data = image_response.content
+                except requests.RequestException:
+                    pass
+            
             if file_path.lower().endswith('.mp3'):
                 audio = MP3(file_path, ID3=ID3)
                 if audio.tags is None: audio.add_tags()
-                if song_name: audio.tags.add(TIT2(encoding=3, text=song_name))
-                if artist_names: audio.tags.add(TPE1(encoding=3, text=artist_names))
-                if album_name: audio.tags.add(TALB(encoding=3, text=album_name))
-                if image_data: audio.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=image_data))
-                if full_lyric: audio.tags.add(USLT(encoding=3, text=full_lyric))
+                
+                audio.tags.add(TIT2(encoding=3, text=song_name))
+                audio.tags.add(TPE1(encoding=3, text=artist_names))
+                audio.tags.add(TALB(encoding=3, text=album_name))
+                audio.tags.add(TPE2(encoding=3, text=album_artist))
+                if track_number:
+                    track_str = f"{track_number}/{total_tracks}" if total_tracks else str(track_number)
+                    audio.tags.add(TRCK(encoding=3, text=track_str))
+                if disc_number:
+                    audio.tags.add(TPOS(encoding=3, text=str(disc_number)))
+                if publisher:
+                    audio.tags.add(TPUB(encoding=3, text=publisher))
+                if release_date_str:
+                    audio.tags.add(TDRC(encoding=3, text=release_date_str))
+                    audio.tags.add(TDOR(encoding=3, text=release_date_str))
+                if release_year_str:
+                    audio.tags.add(TYER(encoding=3, text=release_year_str))
+                if image_data:
+                    audio.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=image_data))
+                if full_lyric:
+                    audio.tags.add(USLT(encoding=3, text=full_lyric))
                 audio.save()
+
             elif file_path.lower().endswith('.flac'):
                 audio = FLAC(file_path)
-                if song_name: audio['title'] = song_name
-                if artist_names: audio['artist'] = artist_names
-                if album_name: audio['album'] = album_name
+                audio['title'] = song_name
+                audio['artist'] = artist_names
+                audio['album'] = album_name
+                audio['albumartist'] = album_artist
+                if track_number: audio['tracknumber'] = str(track_number)
+                if total_tracks: audio['tracktotal'] = str(total_tracks)
+                if disc_number: audio['discnumber'] = str(disc_number)
+                if publisher: audio['organization'] = publisher
+                if full_lyric: audio['lyrics'] = full_lyric
+                if release_date_str: audio['date'] = release_date_str
+                if release_year_str: audio['year'] = release_year_str
+
+                audio.clear_pictures()
                 if image_data:
                     picture = Picture()
                     picture.type = 3; picture.mime = "image/jpeg"; picture.desc = "Cover"; picture.data = image_data
                     audio.add_picture(picture)
-                if full_lyric: audio['lyrics'] = full_lyric
                 audio.save()
-            print(f"后台任务: 元数据嵌入成功 - {os.path.basename(file_path)}")
+
+            print(f"后台任务: 已将最终元数据嵌入 - {os.path.basename(file_path)}")
         except Exception as e:
-            print(f"后台任务: 嵌入元数据时发生错误 - {e}")
+            print(f"后台任务: 嵌入元数据时发生严重错误 - {e}")
+
+### 元数据写入清单
+
+#更新后，每首下载的歌曲（MP3 和 FLAC）现在都会包含以下 **12 项**元数据：
+
+#* **标题 (Title)**：歌曲名称。
+#* **艺术家 (Artist)**：演唱/演奏者。
+#* **专辑 (Album)**：所属专辑名称。
+#* **专辑艺术家 (Album Artist)**：专辑的艺术家（通常用于合辑）。
+#* **发行日期 (Release Date)**：完整的年-月-日。
+#* **年份 (Year)**：独立的四位数年份，增强兼容性。
+#* **音轨号 (Track Number)**：包含当前音轨和总音轨数（例如 `5/12`）。
+#* **碟片号 (Disc Number)**：歌曲所属的碟片编号（例如 `1` 或 `2`）。
+#* **发行商 (Publisher/Label)**：发行该专辑的公司或厂牌。
+#* **封面图片 (Cover Art)**：专辑封面。
+#* **歌词 (Lyrics)**：包含原文和翻译（如果提供）。
+
 
     def _download_and_process_single_version(self, search_key, quality, download_url, extension, song_info, lyric, tlyric):
         album_name = song_info.get('al', {}).get('name', '')
@@ -274,7 +466,7 @@ class NeteaseMusicAPI:
 
     def get_song_details(self, song_id, level):
         """
-        (已有函数) 获取歌曲完整信息，并触发后台下载。
+        获取歌曲完整信息，并触发后台下载。
         """
         meta_data = self._get_song_metadata(song_id)
         if not meta_data or not meta_data.get('songs'): return {"error": "获取歌曲元数据失败。"}
@@ -284,7 +476,7 @@ class NeteaseMusicAPI:
         lyric = lyric_data.get('lrc', {}).get('lyric', '') if lyric_data else ''
         tlyric = lyric_data.get('tlyric', {}).get('lyric', '') if lyric_data else ''
 
-        if self.local_api:
+        if self.local_api and Config.DOWNLOADS_ENABLED:
             threading.Thread(target=self._background_download_task, args=(song_id, meta_info, lyric, tlyric)).start()
 
         url_data = self._get_song_url_data(song_id, level, meta_info)
@@ -337,3 +529,94 @@ class NeteaseMusicAPI:
             return {"error": "未能找到精确匹配的歌曲"}
             
         return self.get_song_details(best_match_id, level)
+
+    def download_playlist_by_id(self, playlist_id: str, level: str) -> dict:
+        """
+        根据歌单ID，将整个歌单的歌曲加入后台下载队列。
+        """
+        data = {'id': playlist_id, 'n': 100000, 's': 0}
+        response = self._post_request(APIConstants.PLAYLIST_DETAIL_API, data)
+        if not response or response.get('code') != 200:
+            return {"error": f"获取歌单 (ID: {playlist_id}) 详情失败，请检查ID是否正确。"}
+        
+        playlist_info = response.get('playlist', {})
+        track_ids = [str(t['id']) for t in playlist_info.get('trackIds', [])]
+        total_songs = len(track_ids)
+
+        if total_songs == 0:
+            return {"error": f"歌单 (ID: {playlist_id}) 中没有找到任何歌曲。"}
+
+        print(f"开始处理歌单 '{playlist_info.get('name')}'，共 {total_songs} 首歌曲。")
+
+        # 遍历歌单中的所有歌曲ID
+        for i, song_id in enumerate(track_ids):
+            print(f"  -> 正在将第 {i+1}/{total_songs} 首歌曲 (ID: {song_id}) 加入队列...")
+            # 调用已有的 get_song_details 方法，它会自动触发后台下载线程
+            self.get_song_details(song_id, level)
+            time.sleep(1) # 添加1秒延迟，避免因请求过快被服务器限制
+        
+        return {"message": f"歌单 '{playlist_info.get('name')}' 已成功加入下载队列，共 {total_songs} 首歌曲。"}
+
+    def download_album_by_id(self, album_id: str, level: str) -> dict:
+        """
+        根据专辑ID，将整个专辑的歌曲加入后台下载队列。
+        """
+        # 直接调用最可靠的 eapi 专辑接口来获取包含所有歌曲信息的完整响应
+        album_response = {}
+        try:
+            params_for_cache_key = {'id': str(album_id), 'e_r': 'true'}
+            cache_key = self._generate_cache_key(params_for_cache_key)
+            final_url = f"{APIConstants.ALBUM_V3_DETAIL}?cache_key={urllib.parse.quote(cache_key)}"
+            eapi_payload = {
+                "id": str(album_id),
+                "e_r": "true",
+                "header": json.dumps(APIConstants.DEFAULT_CONFIG)
+            }
+            album_response = self._post_request(final_url, eapi_payload, is_eapi=True)
+        except Exception as e:
+            return {"error": f"请求专辑 (ID: {album_id}) 数据时发生异常: {e}"}
+
+        if not album_response or album_response.get('code') != 200:
+            return {"error": f"获取专辑 (ID: {album_id}) 详情失败，请检查ID是否正确。"}
+        
+        songs = album_response.get('songs', [])
+        album_name = album_response.get('album', {}).get('name', '未知专辑')
+        total_songs = len(songs)
+
+        if total_songs == 0:
+            return {"error": f"专辑 (ID: {album_id}) 中没有找到任何歌曲。"}
+
+        print(f"开始处理专辑 '{album_name}'，共 {total_songs} 首歌曲。")
+        
+        # 遍历专辑中的所有歌曲
+        for i, song in enumerate(songs):
+            song_id = str(song['id'])
+            print(f"  -> 正在将第 {i+1}/{total_songs} 首歌曲 (ID: {song_id}) 加入队列...")
+            # 同样调用 get_song_details 来触发下载
+            self.get_song_details(song_id, level)
+            time.sleep(1) # 添加1秒延迟
+        
+        return {"message": f"专辑 '{album_name}' 已成功加入下载队列，共 {total_songs} 首歌曲。"}
+
+    def start_background_playlist_download(self, playlist_id: str, level: str):
+        """
+        启动一个后台线程来执行整个歌单的下载任务。
+        这个函数会立即返回。
+        """
+        # 创建并启动一个新线程，目标是我们之前写的 download_playlist_by_id 方法
+        thread = threading.Thread(target=self.download_playlist_by_id, args=(playlist_id, level))
+        thread.daemon = True  # 设置为守护线程，主程序退出时线程也会退出
+        thread.start()
+        print(f"已为歌单 {playlist_id} 启动后台下载线程。")
+
+    def start_background_album_download(self, album_id: str, level: str):
+        """
+        启动一个后台线程来执行整个专辑的下载任务。
+        这个函数会立即返回。
+        """
+        # 创建并启动一个新线程，目标是我们之前写的 download_album_by_id 方法
+        thread = threading.Thread(target=self.download_album_by_id, args=(album_id, level))
+        thread.daemon = True
+        thread.start()
+        print(f"已为专辑 {album_id} 启动后台下载线程。")
+
