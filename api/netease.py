@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 # --- 3. 您自己的模块导入 ---
 from utils.helpers import Utils
+from core.config import Config
 
 class APIConstants:
     """API相关常量"""

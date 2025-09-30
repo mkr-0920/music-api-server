@@ -61,13 +61,13 @@ def handle_netease_request():
         # 调用“启动器”函数，它会立即返回
         netease_api.start_background_playlist_download(playlist_id, level)
         # 立即返回“任务已接受”响应
-        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"歌单 {playlist_id} 已加入后台下载队列。"}})
+        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"歌单 {playlist_id} 已加入后台下载队列。"}}), 202
     
     elif album_id:
         # 调用“启动器”函数，它会立即返回
         netease_api.start_background_album_download(album_id, level)
         # 立即返回“任务已接受”响应
-        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"专辑 {album_id} 已加入后台下载队列。"}})
+        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"专辑 {album_id} 已加入后台下载队列。"}}), 202
 
     elif song_id:
         data = netease_api.get_song_details(song_id, level)
@@ -109,13 +109,13 @@ def handle_qq_request():
         # 调用异步启动器，此函数会立即返回
         qq_api.start_background_playlist_download(playlist_id, level)
         # 立刻返回“任务已接受”响应，不阻塞
-        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"歌单 {playlist_id} 已加入后台下载队列。"}})
+        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"歌单 {playlist_id} 已加入后台下载队列。"}}), 202
     
     elif album_id:
         # 调用异步启动器，此函数会立即返回
         qq_api.start_background_album_download(album_id, level)
         # 立刻返回“任务已接受”响应，不阻塞
-        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"专辑 {album_id} 已加入后台下载队列。"}})
+        return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"专辑 {album_id} 已加入后台下载队列。"}}), 202
 
     # --- 3. 如果没有批量任务，则执行原有的单个查询逻辑 ---
     
