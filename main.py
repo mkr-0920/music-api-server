@@ -1,5 +1,6 @@
 import os
 import urllib.parse
+import sqlite3
 from functools import wraps
 from flask import Flask, request, jsonify, Response
 from flask_apscheduler import APScheduler
@@ -16,7 +17,7 @@ from api.local import LocalMusicAPI # <-- 导入本地API类
 # qq音乐刷新cookies
 from core.qq_refresh.refresher import QQCookieRefresher
 # --------------------------------------------------------------------------
-# 1. 初始化应用和所有API客户端
+# 初始化应用和所有API客户端
 # --------------------------------------------------------------------------
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
@@ -24,11 +25,11 @@ app.config['JSON_AS_ASCII'] = False
 # 实例化所有API客户端
 kuwo_api = KuwoMusicAPI()
 local_api = LocalMusicAPI(Config.DATABASE_FILE)
-netease_api = NeteaseMusicAPI(Config.NETEASE_COOKIE_STR, local_api, Config.MUSIC_DIRECTORY)
-qq_api = QQMusicAPI(local_api, Config.MUSIC_DIRECTORY)
+netease_api = NeteaseMusicAPI(Config.NETEASE_COOKIE_STR, local_api, Config.MUSIC_DIRECTORY, Config.FLAC_DIRECTORY)
+qq_api = QQMusicAPI(local_api, Config.MUSIC_DIRECTORY, Config.FLAC_DIRECTORY)
 
 # --------------------------------------------------------------------------
-# 2. API密钥验证装饰器
+# API密钥验证装饰器
 # --------------------------------------------------------------------------
 def require_api_key(f):
     @wraps(f)
@@ -40,7 +41,7 @@ def require_api_key(f):
     return decorated_function
 
 # --------------------------------------------------------------------------
-# 3. 定义所有Flask路由
+# 定义所有Flask路由
 # --------------------------------------------------------------------------
 @app.route('/')
 def index():
@@ -90,19 +91,16 @@ def handle_qq_request():
     支持通过 'playlist_id' 或 'album_id' 触发后台批量下载。
     也支持通过 'mid' 直接获取详情，或通过 'q' (关键词) 和可选的 'album' (专辑)进行搜索。
     """
-    # --- 1. 获取所有可能的参数 ---
     song_mid = request.args.get('mid')
     song_id = request.args.get('id')
     keyword = request.args.get('q')
-    album_search = request.args.get('album') # 用于搜索过滤的 'album'
+    album_search = request.args.get('album')
     
-    playlist_id = request.args.get('playlist_id') # 歌单ID参数
-    album_id = request.args.get('album_id')       # 专辑ID参数
+    playlist_id = request.args.get('playlist_id')
+    album_id = request.args.get('album_id')
     
-    # level 参数在此处仅为保持API格式统一，QQ后端逻辑会自动下载所有可用音质
+    # level 参数在此处仅为保持API格式统一，后端逻辑会自动降级查找
     level = request.args.get('level', 'master') 
-
-    # --- 2. 【核心修改】根据参数优先级处理请求 ---
     
     # 优先处理批量下载任务
     if playlist_id:
@@ -116,8 +114,6 @@ def handle_qq_request():
         qq_api.start_background_album_download(album_id, level)
         # 立刻返回“任务已接受”响应，不阻塞
         return jsonify({"code": 202, "message": "任务已接受", "data": {"message": f"专辑 {album_id} 已加入后台下载队列。"}}), 202
-
-    # --- 3. 如果没有批量任务，则执行原有的单个查询逻辑 ---
     
     data = None
     if song_id or song_mid:
@@ -148,11 +144,11 @@ def handle_kuwo_request():
         return jsonify({"code": 404, "message": data["error"]}), 404
     return jsonify({"code": 200, "message": "成功", "data": data})
 
-# --- 本地音乐API路由 ---
+# 本地音乐API路由
 @app.route('/api/local/search')
 @require_api_key
 def handle_local_search():
-    """根据 '歌手 - 歌名' 搜索本地音乐"""
+    """根据 '歌手 - 歌名' 搜索本地音乐，专辑参数可选"""
     query = request.args.get('q')
     album = request.args.get('album')
     quality = request.args.get('quality')
@@ -183,12 +179,74 @@ def handle_local_download(song_id):
     
     encoded_filename = quote(filename)
     response.headers['Content-Disposition'] = f'attachment; filename*=UTF-8\'\'{encoded_filename}'
-    # --- 修正结束 ---
     
     return response
 
+@app.route('/api/local/list', methods=['GET'])
+@require_api_key
+def list_local_songs():
+    """获取本地数据库中所有歌曲的列表。"""
+    try:
+        conn = sqlite3.connect(Config.DATABASE_FILE)
+        cursor = conn.cursor()
+        # 查询所有需要的字段，并按ID排序
+        cursor.execute("SELECT id, search_key, album, quality, file_path FROM songs ORDER BY id DESC")
+        songs_tuples = cursor.fetchall()
+        conn.close()
+        # 将元组列表转换为字典列表，方便前端处理
+        songs_list = [
+            dict(id=s[0], search_key=s[1], album=s[2], quality=s[3], file_path=s[4])
+            for s in songs_tuples
+        ]
+        return jsonify({"code": 200, "data": songs_list})
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"读取数据库时出错: {e}"}), 500
 
-# 4.--- 定时任务 ---
+@app.route('/api/local/delete', methods=['POST'])
+@require_api_key
+def delete_local_songs():
+    """从数据库和文件系统中删除指定的歌曲。"""
+    ids_to_delete = request.json.get('ids')
+    if not ids_to_delete or not isinstance(ids_to_delete, list):
+        return jsonify({"code": 400, "message": "请求体中必须包含一个有效的 'ids' 列表。"}), 400
+
+    conn = sqlite3.connect(Config.DATABASE_FILE)
+    cursor = conn.cursor()
+    
+    deleted_count = 0
+    errors = []
+
+    try:
+        # 首先，获取要删除的歌曲的文件路径
+        placeholders = ','.join('?' for _ in ids_to_delete)
+        cursor.execute(f"SELECT id, file_path, search_key FROM songs WHERE id IN ({placeholders})", ids_to_delete)
+        songs_to_delete = cursor.fetchall()
+
+        for song_id, file_path, search_key in songs_to_delete:
+            try:
+                # 从文件系统删除
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                
+                # 从数据库删除
+                cursor.execute("DELETE FROM songs WHERE id = ?", (song_id,))
+                deleted_count += 1
+            except Exception as e:
+                errors.append(f"删除歌曲 '{search_key}' (ID: {song_id}) 时出错: {e}")
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"code": 500, "message": f"数据库操作时发生严重错误: {e}"}), 500
+    finally:
+        conn.close()
+
+    if errors:
+        return jsonify({"code": 207, "message": f"操作部分成功，删除了 {deleted_count} 首歌曲。", "errors": errors}), 207
+
+    return jsonify({"code": 200, "message": f"成功删除了 {deleted_count} 首歌曲。"})
+
+# --- 定时任务 ---
 scheduler = APScheduler()
 
 def refresh_qq_cookie_job():
@@ -197,10 +255,10 @@ def refresh_qq_cookie_job():
         refresher = QQCookieRefresher()
         refresher.refresh()
 # --------------------------------------------------------------------------
-# 5. 启动服务器
+# 启动服务器
 # --------------------------------------------------------------------------
 if __name__ == '__main__':
-    # 手动调用一次，确保启动时立即刷新
+    # # 手动调用一次，确保启动时立即刷新
     # print("Executing initial cookie refresh on startup...")
     # with app.app_context():
     #     refresh_qq_cookie_job()
