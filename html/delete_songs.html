@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本地音乐库管理</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f0f2f5; }
+        .card { background-color: white; border-radius: 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); }
+        .btn-danger { background-color: #ef4444; transition: background-color 0.3s ease; }
+        .btn-danger:hover { background-color: #dc2626; }
+        .btn-danger:disabled { background-color: #fca5a5; cursor: not-allowed; }
+        .loader { border-top-color: #667eea; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        /* 自定义滚动条样式 */
+        .table-container::-webkit-scrollbar { width: 8px; }
+        .table-container::-webkit-scrollbar-track { background: #f1f1f1; }
+        .table-container::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+        .table-container::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="card w-full max-w-7xl mx-auto p-8 space-y-6">
+        <div class="text-center">
+            <h1 class="text-3xl font-bold text-gray-800">本地音乐库管理</h1>
+            <p class="text-gray-500 mt-2">查看、搜索和删除您已索引的本地音乐文件。</p>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            <div class="md:col-span-2">
+                <label for="apiKey" class="text-sm font-medium text-gray-700">API 密钥 (X-API-Key)</label>
+                <input type="password" id="apiKey" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="请输入您的 API 密钥">
+            </div>
+            <div>
+                <button id="loadSongsBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:shadow-outline flex items-center justify-center">
+                    <span id="btnText">加载/刷新歌曲列表</span>
+                    <div id="loader" class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-6 w-6 ml-3 hidden"></div>
+                </button>
+            </div>
+        </div>
+
+        <div id="controls" class="hidden items-center justify-between gap-4 p-4 bg-gray-50 rounded-lg">
+             <input type="text" id="searchInput" class="block w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="按歌名、歌手或专辑搜索...">
+             <button id="deleteBtn" class="btn-danger text-white font-bold py-2 px-6 rounded-lg focus:outline-none focus:shadow-outline whitespace-nowrap" disabled>删除选中 (0)</button>
+        </div>
+
+        <div id="result" class="mt-4"></div>
+
+        <div class="table-container overflow-x-auto max-h-[60vh] hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50 sticky top-0">
+                    <tr>
+                        <th class="px-4 py-3 text-left w-12"><input type="checkbox" id="selectAll"></th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">歌曲 (Search Key)</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">专辑</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">音质</th>
+                    </tr>
+                </thead>
+                <tbody id="songList" class="bg-white divide-y divide-gray-200">
+                    <!-- Song rows will be inserted here by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Confirmation Modal -->
+    <div id="confirmationModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center hidden">
+        <div class="relative mx-auto p-8 border w-full max-w-md shadow-lg rounded-xl bg-white">
+            <div class="text-center">
+                <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+                    <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                </div>
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mt-4">确认删除</h3>
+                <div class="mt-2 px-7 py-3">
+                    <p class="text-sm text-gray-500">
+                        您确定要删除选中的 <strong id="deleteCount"></strong> 首歌曲吗？<br>
+                        此操作将同时删除数据库记录和对应的本地文件，且**不可恢复**。
+                    </p>
+                </div>
+                <div class="items-center px-4 py-3 gap-4 flex justify-center">
+                    <button id="cancelDelete" class="px-6 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 focus:outline-none">取消</button>
+                    <button id="confirmDelete" class="px-6 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none">确认删除</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const elements = {
+            apiKey: document.getElementById('apiKey'),
+            loadSongsBtn: document.getElementById('loadSongsBtn'),
+            btnText: document.getElementById('btnText'),
+            loader: document.getElementById('loader'),
+            result: document.getElementById('result'),
+            controls: document.getElementById('controls'),
+            searchInput: document.getElementById('searchInput'),
+            deleteBtn: document.getElementById('deleteBtn'),
+            tableContainer: document.querySelector('.table-container'),
+            selectAll: document.getElementById('selectAll'),
+            songList: document.getElementById('songList'),
+            modal: document.getElementById('confirmationModal'),
+            deleteCount: document.getElementById('deleteCount'),
+            cancelDelete: document.getElementById('cancelDelete'),
+            confirmDelete: document.getElementById('confirmDelete'),
+        };
+
+        let allSongs = [];
+
+        function showLoading(isLoading) {
+            elements.loader.classList.toggle('hidden', !isLoading);
+            elements.loadSongsBtn.disabled = isLoading;
+            elements.btnText.textContent = isLoading ? '正在加载...' : '加载/刷新歌曲列表';
+        }
+
+        function displayMessage(htmlContent) {
+            elements.result.innerHTML = htmlContent;
+        }
+        
+        async function loadSongs() {
+            const apiKey = elements.apiKey.value.trim();
+            if (!apiKey) {
+                displayMessage(`<div class="bg-red-100 border-red-400 text-red-700 px-4 py-3 rounded-lg"><strong>错误:</strong> 请输入API密钥。</div>`);
+                return;
+            }
+            
+            showLoading(true);
+            displayMessage('');
+            elements.controls.classList.add('hidden');
+            elements.tableContainer.classList.add('hidden');
+
+            try {
+                const response = await fetch('/api/local/list', { headers: { 'X-API-Key': apiKey } });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || '加载失败');
+
+                allSongs = data.data || [];
+                renderTable(allSongs);
+                elements.controls.classList.remove('hidden');
+                elements.tableContainer.classList.remove('hidden');
+                updateDeleteButton();
+
+            } catch (error) {
+                displayMessage(`<div class="bg-red-100 border-red-400 text-red-700 px-4 py-3 rounded-lg"><strong>操作失败:</strong> ${error.message}</div>`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function renderTable(songs) {
+            elements.songList.innerHTML = songs.map(song => `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3"><input type="checkbox" class="song-checkbox" data-id="${song.id}"></td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${song.id}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${song.search_key}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${song.album || 'N/A'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${song.quality}</td>
+                </tr>
+            `).join('');
+        }
+
+        function updateDeleteButton() {
+            const selectedCount = document.querySelectorAll('.song-checkbox:checked').length;
+            elements.deleteBtn.disabled = selectedCount === 0;
+            elements.deleteBtn.textContent = `删除选中 (${selectedCount})`;
+        }
+        
+        function filterSongs() {
+            const query = elements.searchInput.value.toLowerCase();
+            const filteredSongs = allSongs.filter(song => 
+                (song.search_key && song.search_key.toLowerCase().includes(query)) ||
+                (song.album && song.album.toLowerCase().includes(query))
+            );
+            renderTable(filteredSongs);
+        }
+
+        elements.loadSongsBtn.addEventListener('click', loadSongs);
+        elements.searchInput.addEventListener('input', filterSongs);
+        elements.songList.addEventListener('change', updateDeleteButton);
+        elements.selectAll.addEventListener('change', (e) => {
+            document.querySelectorAll('.song-checkbox').forEach(cb => cb.checked = e.target.checked);
+            updateDeleteButton();
+        });
+        
+        elements.deleteBtn.addEventListener('click', () => {
+            const selectedIds = Array.from(document.querySelectorAll('.song-checkbox:checked')).map(cb => parseInt(cb.dataset.id));
+            if (selectedIds.length > 0) {
+                elements.deleteCount.textContent = selectedIds.length;
+                elements.modal.classList.remove('hidden');
+            }
+        });
+
+        elements.cancelDelete.addEventListener('click', () => elements.modal.classList.add('hidden'));
+
+        elements.confirmDelete.addEventListener('click', async () => {
+            elements.modal.classList.add('hidden');
+            const apiKey = elements.apiKey.value.trim();
+            const selectedIds = Array.from(document.querySelectorAll('.song-checkbox:checked')).map(cb => parseInt(cb.dataset.id));
+
+            displayMessage(`<div class="flex items-center justify-center p-4 bg-blue-100 rounded-lg"><div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-6 w-6"></div><span class="ml-3">正在删除...</span></div>`);
+
+            try {
+                const response = await fetch('/api/local/delete', {
+                    method: 'POST',
+                    headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: selectedIds })
+                });
+                const data = await response.json();
+                if (!response.ok && response.status !== 207) throw new Error(data.message || '删除失败');
+
+                let messageHtml = `<div class="bg-green-100 border-green-400 text-green-700 px-4 py-3 rounded-lg">${data.message}</div>`;
+                if(data.errors && data.errors.length > 0) {
+                    messageHtml = `<div class="bg-yellow-100 border-yellow-400 text-yellow-700 px-4 py-3 rounded-lg"><p>${data.message}</p><ul class="list-disc list-inside mt-2">${data.errors.map(e => `<li>${e}</li>`).join('')}</ul></div>`;
+                }
+                displayMessage(messageHtml);
+                loadSongs(); // Refresh the list
+            } catch (error) {
+                displayMessage(`<div class="bg-red-100 border-red-400 text-red-700 px-4 py-3 rounded-lg"><strong>操作失败:</strong> ${error.message}</div>`);
+            }
+        });
+
+    </script>
+</body>
+</html>
