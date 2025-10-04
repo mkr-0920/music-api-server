@@ -11,7 +11,7 @@ class QQCookieRefresher:
         self.config_path = Path(__file__).parent.parent.parent / "core" / "config.py"
 
     def _build_request_body(self) -> dict:
-        """构建简化的请求体"""
+        """构建请求体"""
         return {
             "comm": {
                 "fPersonality": "0",
@@ -77,6 +77,7 @@ class QQCookieRefresher:
             response = requests.post(url, data=json_body.encode('utf-8'), headers=headers, timeout=10)
             response.raise_for_status()
             response_data = response.json()
+            print(f"qq音乐刷新响应：{response_data}")
 
             if response_data.get("req1", {}).get("code") != 0:
                 # 失败时打印完整的服务器响应，方便调试

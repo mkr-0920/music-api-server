@@ -1,4 +1,3 @@
-# --- 1. 标准库导入 ---
 import os
 import re
 import json
@@ -10,23 +9,21 @@ import datetime
 import threading
 import urllib.parse
 
-# --- 2. 第三方库导入 ---
 import requests
 from opencc import OpenCC
 
-# mutagen (处理音乐元数据)
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, APIC, USLT, TIT2, TPE1, TALB, TPE2, TDRC, TRCK, TYER, TPOS, TCON, TPUB, TDOR, TEXT, TCOM, TPE4, TBPM
 from mutagen.flac import FLAC, Picture
 
-# --- 3. 您自己的模块导入 ---
 from utils.helpers import Utils
 from core.config import Config
 
 class QQMusicAPI:
-    def __init__(self, local_api_instance, music_directory: str):
+    def __init__(self, local_api_instance, music_directory: str, flac_directory: str):
         self.local_api = local_api_instance
         self.music_directory = music_directory
+        self.flac_directory = flac_directory
         self.converter = OpenCC('t2s')
         self.base_url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
         self.headers = {
@@ -99,6 +96,24 @@ class QQMusicAPI:
         print(f"ID解析失败: mid={song_mid}, id={song_id}。响应: {response}")
         return None
 
+    def _fetch_single_url(self, song_mid, quality, guid, uin):
+        """获取单个指定音质的URL，成功返回URL字符串，失败返回None"""
+        if quality not in self.file_config:
+            return None
+
+        config = self.file_config[quality]
+        filename = f"{config['s']}{song_mid}{song_mid}{config['e']}"
+        payload = {"req_1": {"module": "vkey.GetVkeyServer", "method": "CgiGetVkey", "param": {"filename": [filename], "guid": guid, "songmid": [song_mid], "songtype": [0], "uin": uin, "loginflag": 1, "platform": "20"}}, "comm": {"uin": uin, "format": "json", "ct": 24, "cv": 0}}
+        
+        vkey_data = self._post_request(payload)
+        
+        if vkey_data and vkey_data.get('req_1', {}).get('data', {}).get('midurlinfo', [{}])[0].get('purl'):
+            purl = vkey_data['req_1']['data']['midurlinfo'][0]['purl']
+            domain = next((d for d in vkey_data['req_1']['data'].get('sip', []) if 'pv.music' in d), 'https://isure.stream.qqmusic.qq.com/')
+            return domain + purl
+            
+        return None
+
     def _get_album_details_by_mid(self, album_mid: str) -> dict:
         if not album_mid: return None
         url = 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg'
@@ -110,7 +125,6 @@ class QQMusicAPI:
         return None
 
     def _embed_metadata(self, file_path: str, song_info: dict, lyric: str, tlyric: str):
-        # ... 此函数保持不变 ...
         try:
             song_name = song_info.get('name')
             artist_names = song_info.get('artist')
@@ -146,7 +160,7 @@ class QQMusicAPI:
                     release_year_str = dt_object.strftime('%Y')
                 except ValueError: pass
 
-            full_lyric = f"{lyric}\n\n--- 翻译 ---\n\n{tlyric}" if tlyric and lyric else lyric
+            full_lyric = f"{lyric}\n\n--- 翻译\n\n{tlyric}" if tlyric and lyric else lyric
             image_data = None
             if song_info.get('cover_url'):
                 try:
@@ -211,9 +225,19 @@ class QQMusicAPI:
         album_name = song_info.get('album_name', '')
         safe_album_name = re.sub(r'[\\/*?:"<>|]', "", album_name)
         base_name = f"{search_key} {safe_album_name}" if safe_album_name else search_key
+        
+        # 动态决定保存路径
+        save_directory = self.music_directory
+
+        if quality == 'flac':
+            existing_qualities = self.local_api.get_existing_qualities(search_key, album_name)
+            if 'master' in existing_qualities:
+                print(f">>> 检测到已存在 master 版本，将把 flac 版本下载到 'flac' 目录。")
+                save_directory = self.flac_directory
+
         filename_suffix = " [M]" if quality == 'master' else ""
         safe_filename = re.sub(r'[\\/*?:"<>|]', "", base_name)
-        file_path = os.path.join(self.music_directory, f"{safe_filename}{filename_suffix}{extension}")
+        file_path = os.path.join(save_directory, f"{safe_filename}{filename_suffix}{extension}")
         
         max_retries = 3
         for attempt in range(max_retries):
@@ -283,7 +307,6 @@ class QQMusicAPI:
                             return
 
     def get_song_info(self, song_mid):
-        # ... 此函数保持不变 ...
         payload = {"comm": {"cv": 4747474, "ct": 24, "format": "json", "platform": "yqq.json"}, "req_1": {"module": "music.pf_song_detail_svr", "method": "get_song_detail", "param": {"song_mid": song_mid}}}
         song_data = self._post_request(payload)
         if not song_data or song_data.get('code') != 0: return None
@@ -310,23 +333,41 @@ class QQMusicAPI:
         }
 
     def get_song_urls(self, song_mid):
-        # ... 此函数保持不变 ...
         urls = {}
         uin = Config.QQ_USER_CONFIG.get("uin", "0")
         guid = str(random.randint(1000000000, 9999999999))
-        for quality, config in self.file_config.items():
-            filename = f"{config['s']}{song_mid}{song_mid}{config['e']}"
-            payload = {"req_1": {"module": "vkey.GetVkeyServer", "method": "CgiGetVkey", "param": {"filename": [filename], "guid": guid, "songmid": [song_mid], "songtype": [0], "uin": uin, "loginflag": 1, "platform": "20"}}, "comm": {"uin": uin, "format": "json", "ct": 24, "cv": 0}}
-            vkey_data = self._post_request(payload)
-            if vkey_data and vkey_data.get('req_1', {}).get('data', {}).get('midurlinfo', [{}])[0].get('purl'):
-                purl = vkey_data['req_1']['data']['midurlinfo'][0]['purl']
-                domain = next((d for d in vkey_data['req_1']['data'].get('sip', []) if 'pv.music' in d), 'https://isure.stream.qqmusic.qq.com/')
-                urls[quality] = domain + purl
+
+        # 优先级 1: 尝试获取 master 和 flac
+        high_qualities = ['master', 'flac']
+        for quality in high_qualities:
+            # 调用辅助函数获取链接
+            url = self._fetch_single_url(song_mid, quality, guid, uin)
+            if url:
+                urls[quality] = url
             time.sleep(0.2)
+
+        # 如果在优先级1中获取到了任何链接，就直接返回结果
+        if urls:
+            return urls
+
+        # 优先级 2: 降级尝试获取 320k
+        # (只有当 master 和 flac 都失败时，才会执行到这里)
+        url_320 = self._fetch_single_url(song_mid, '320', guid, uin)
+        if url_320:
+            urls['320'] = url_320
+            # 获取成功，立即返回，不再尝试128k
+            return urls
+
+        # 优先级 3: 再次降级尝试获取 128k
+        # (只有当 320k 也失败时，才会执行到这里)
+        url_128 = self._fetch_single_url(song_mid, '128', guid, uin)
+        if url_128:
+            urls['128'] = url_128
+        
+        # 返回最终结果，可能是128k的链接，也可能是空字典 {}
         return urls
 
     def get_lyrics(self, song_id):
-        # ... 此函数保持不变 ...
         payload = {"comm": {"cv": 4747474, "ct": 24, "format": "json", "platform": "yqq.json"}, "req_1": {"module": "music.musichallSong.PlayLyricInfo", "method": "GetPlayLyricInfo", "param": {"songID": song_id, "trans": 1, "roma": 1}}}
         lyric_data = self._post_request(payload)
         if not lyric_data or lyric_data.get('code') != 0: return "", ""
@@ -337,7 +378,7 @@ class QQMusicAPI:
 
     def get_song_details(self, song_mid: str = None, song_id: int = None):
         """
-        【重构版】统一的歌曲处理入口。
+        统一的歌曲处理入口。
         无论输入 mid还是id，都能补全信息并触发下载。
         """
         resolved_ids = self._resolve_song_ids(song_mid=song_mid, song_id=song_id)
@@ -391,9 +432,9 @@ class QQMusicAPI:
 
     def download_playlist_by_id(self, playlist_id: str, level: str):
         """
-        (后台线程运行) 【最终方案】使用 fcg_v8_playlist_cp.fcg 接口下载整个歌单。
+        使用 fcg_v8_playlist_cp.fcg 接口下载整个歌单。
         """
-        # --- 1. 定义接口地址和参数 ---
+        # 定义接口地址和参数
         url = 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_playlist_cp.fcg'
         params = {
             'id': playlist_id,
@@ -404,10 +445,10 @@ class QQMusicAPI:
             'platform': 'mac',
         }
         
-        # --- 2. 发起请求 ---
+        # 发起请求
         response = self._get_request(url, params=params)
         
-        # --- 3. 解析响应 ---
+        # 解析响应
         if not response or response.get('code', -1) != 0:
             print(f"错误: 获取歌单 (ID: {playlist_id}) 详情失败。服务器响应: {response}")
             return
@@ -420,7 +461,7 @@ class QQMusicAPI:
         playlist_data = cdlist[0]
         playlist_name = playlist_data.get('dissname', '未知歌单')
         
-        # --- 4. 【核心修正】使用 'songids' 字段进行循环 ---
+        # 使用 'songids' 字段进行循环
         song_ids_str = playlist_data.get('songids')
         if not song_ids_str:
             print(f"歌单 '{playlist_name}' (ID: {playlist_id}) 中没有找到任何歌曲 (songids为空)。")
