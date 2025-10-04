@@ -35,10 +35,10 @@ class LocalMusicAPI:
         if not title:
             return ""
         
-        # 1. 转为小写
+        # 转为小写
         normalized_title = title.lower()
 
-        # 2. 定义一个简单的映射来处理用户示例中的数字转换
+        # 定义一个简单的映射来处理用户示例中的数字转换
         # 注意：这个实现比较简单，仅用于处理“十”和“十一”到“十九”这类常见情况
         num_map = {
             '十一': '11', '十二': '12', '十三': '13', '十四': '14', '十五': '15',
@@ -49,7 +49,7 @@ class LocalMusicAPI:
         for cn_num, an_num in num_map.items():
             normalized_title = normalized_title.replace(cn_num, an_num)
 
-        # 3. 移除所有非字母、非数字、非中文字符，以忽略特殊版本标记（如 "special edition"）
+        # 移除所有非字母、非数字、非中文字符，以忽略特殊版本标记（如 "special edition"）
         # [^a-z0-9\u4e00-\u9fa5] 匹配任何不是小写字母、数字或中文字符的字符
         normalized_title = re.sub(r'[^a-z0-9\u4e00-\u9fa5]', '', normalized_title)
 
@@ -84,15 +84,15 @@ class LocalMusicAPI:
             results = self._query_db('SELECT quality FROM songs WHERE search_key = ?', (search_key,))
             return [row[0] for row in results] if results else []
 
-        # 1. 获取该 search_key 对应的所有歌曲版本
+        # 获取该 search_key 对应的所有歌曲版本
         all_versions = self._query_db('SELECT quality, album FROM songs WHERE search_key = ?', (search_key,))
         if not all_versions:
             return []
 
-        # 2. 标准化输入的专辑名以进行比较
+        # 标准化输入的专辑名以进行比较
         normalized_input_album = self._normalize_album_title(album)
 
-        # 3. 遍历数据库结果，进行标准化比较
+        # 遍历数据库结果，进行标准化比较
         matching_qualities = []
         for quality, db_album in all_versions:
             normalized_db_album = self._normalize_album_title(db_album)
