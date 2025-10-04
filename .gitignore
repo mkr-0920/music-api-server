@@ -8,3 +8,5 @@ core/config.py
 music_library.db
 scanner.log
 test.txt
+spotify.py
+separate_flac.py
