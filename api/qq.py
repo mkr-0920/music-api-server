@@ -106,7 +106,7 @@ class QQMusicAPI:
         payload = {"req_1": {"module": "vkey.GetVkeyServer", "method": "CgiGetVkey", "param": {"filename": [filename], "guid": guid, "songmid": [song_mid], "songtype": [0], "uin": uin, "loginflag": 1, "platform": "20"}}, "comm": {"uin": uin, "format": "json", "ct": 24, "cv": 0}}
         
         vkey_data = self._post_request(payload)
-        
+        # print(f"url返回{vkey_data}"        
         if vkey_data and vkey_data.get('req_1', {}).get('data', {}).get('midurlinfo', [{}])[0].get('purl'):
             purl = vkey_data['req_1']['data']['midurlinfo'][0]['purl']
             domain = next((d for d in vkey_data['req_1']['data'].get('sip', []) if 'pv.music' in d), 'https://isure.stream.qqmusic.qq.com/')
