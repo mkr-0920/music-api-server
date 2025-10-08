@@ -1,4 +1,8 @@
 import os
+import time
+import datetime
+import hashlib
+import base64
 import urllib.parse
 import sqlite3
 from functools import wraps
@@ -161,7 +165,48 @@ def handle_local_search():
     
     return jsonify({"code": 200, "message": "成功", "data": data})
 
+# 流媒体播放
+@app.route('/api/local/stream_url/<int:song_id>')
+@require_api_key
+def generate_stream_url(song_id):
+    """
+    为一首本地歌曲生成一个临时的、安全的可流媒体播放链接。
+    """
+    file_path = local_api.get_song_path_by_id(song_id)
+    if not file_path:
+        return jsonify({"error": "无效的歌曲ID"}), 404
+
+    # 1. 定义与 Nginx 配置中完全一致的密钥
+    nginx_secret = "YOUR_NGINX_SECRET" # 必须与 nginx.conf 中的密钥相同
+
+    # 2. 设置链接的有效期（例如，3小时后过期）
+    expires = int(time.time()) + 3 * 3600  # 3 hours
+    
+    # 3. 构造 Nginx 需要的 URI
+    uri_path = f"/secure_media{file_path}"
+
+    # 4. 按照 Nginx 的规则生成 MD5 哈希
+    # 格式: expires + uri + secret
+    string_to_hash = f"{expires}{uri_path} {nginx_secret}"
+    
+    # 5. 计算 MD5 并进行 Base64 编码
+    md5_hash = hashlib.md5(string_to_hash.encode('utf-8')).digest()
+    secure_hash = base64.urlsafe_b64encode(md5_hash).decode('utf-8').replace('=', '')
+
+    # 6. 组装最终的流媒体 URL
+    stream_url = f"https://musicapi.010920.xyz{uri_path}?md5={secure_hash}&expires={expires}"
+    
+    return jsonify({
+        "code": 200,
+        "message": "成功",
+        "data": {
+            "url": stream_url,
+            "expires_at": datetime.datetime.fromtimestamp(expires).isoformat()
+        }
+    })
+
 @app.route('/api/local/download/<int:song_id>')
+@require_api_key
 def handle_local_download(song_id):
     """为Nginx提供文件路径以下载本地音乐"""
     file_path = local_api.get_song_path_by_id(song_id)
