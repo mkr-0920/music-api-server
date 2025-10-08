@@ -24,9 +24,13 @@
 <body class="p-4 md:p-8">
 
     <div class="card w-full max-w-7xl mx-auto p-8 space-y-6">
-        <div class="text-center">
-            <h1 class="text-3xl font-bold text-gray-800">本地音乐库管理</h1>
-            <p class="text-gray-500 mt-2">查看、搜索和删除您已索引的本地音乐文件。</p>
+        <div class="flex justify-between items-center">
+            <div class="text-center md:text-left">
+                <h1 class="text-3xl font-bold text-gray-800">本地音乐库管理</h1>
+                <p class="text-gray-500 mt-2">查看、搜索和删除您已索引的本地音乐文件。</p>
+            </div>
+            <!-- 【核心修改】添加返回链接 -->
+            <a href="/music_parser.html" class="text-indigo-600 hover:text-indigo-800 font-semibold whitespace-nowrap">&larr; 返回解析器</a>
         </div>
         
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
@@ -225,3 +229,4 @@
     </script>
 </body>
 </html>
+
