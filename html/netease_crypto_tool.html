@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>网易云音乐 EAPI 工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- 引入 Crypto-JS 库用于加解密 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/md5.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f0f2f5; }
+        .card { background-color: white; border-radius: 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); }
+        .btn { transition: all 0.2s ease; }
+        .btn-primary { background-color: #c2410c; }
+        .btn-primary:hover { background-color: #9a3412; }
+        textarea { resize: vertical; font-family: monospace; }
+        .tab-btn.active { color: #c2410c; border-color: #c2410c; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="card w-full max-w-4xl mx-auto p-8 space-y-6">
+        <div class="flex justify-between items-center">
+            <div class="text-center md:text-left">
+                <h1 class="text-3xl font-bold text-gray-800">网易云音乐 EAPI 工具</h1>
+                <p class="text-gray-500 mt-2">用于加密/解密 EAPI 请求与响应。</p>
+            </div>
+            <a href="/music_parser.html" class="text-indigo-600 hover:text-indigo-800 font-semibold whitespace-nowrap">&larr; 返回解析器</a>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-200">
+            <button id="tabRequest" class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent active">请求 (Request)</button>
+            <button id="tabResponse" class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent">响应 (Response)</button>
+        </div>
+
+        <!-- Request View -->
+        <div id="viewRequest" class="space-y-8">
+            <!-- 加密器 -->
+            <div class="space-y-4 p-6 border border-gray-200 rounded-lg">
+                <h2 class="text-xl font-bold text-gray-700">EAPI 请求加密器</h2>
+                <div>
+                    <label for="apiUrlPath" class="text-sm font-medium text-gray-700">API 路径 (例如: /api/song/detail)</label>
+                    <input type="text" id="apiUrlPath" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="/api/link/page/parent/relation/construct/info">
+                </div>
+                <div>
+                    <label for="jsonPayload" class="text-sm font-medium text-gray-700">JSON 请求体 (明文)</label>
+                    <textarea id="jsonPayload" rows="6" class="mt-1 block w-full px-4 py-3 bg-gray-50 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" placeholder='{&#10;  "id": "191179",&#10;  "c": "[{\\"id\\":\\"191179\\"}]"&#10;}'></textarea>
+                </div>
+                <button id="encryptBtn" class="w-full btn btn-primary text-white font-bold py-3 rounded-lg">加密请求</button>
+                <div>
+                    <label for="encryptedResult" class="text-sm font-medium text-gray-700">加密后的 Params (Hex)</label>
+                    <textarea id="encryptedResult" rows="6" class="mt-1 block w-full px-4 py-3 bg-gray-50 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"></textarea>
+                </div>
+                 <button id="copyEncryptBtn" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 rounded-lg">复制加密结果</button>
+            </div>
+            
+            <!-- 请求解密器 -->
+            <div class="space-y-4 p-6 border border-gray-200 rounded-lg">
+                <h2 class="text-xl font-bold text-gray-700">EAPI 请求解密器</h2>
+                 <div>
+                    <label for="paramHexInput" class="text-sm font-medium text-gray-700">加密的 Params (Hex)</label>
+                    <textarea id="paramHexInput" rows="6" class="mt-1 block w-full px-4 py-3 bg-gray-50 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="粘贴从请求体中抓包获取的 params 十六进制字符串..."></textarea>
+                </div>
+                <button id="decryptParamBtn" class="w-full btn btn-primary text-white font-bold py-3 rounded-lg">解密请求</button>
+                <div>
+                    <label for="decryptedApiParam" class="text-sm font-medium text-gray-700">解密后的 API 路径</label>
+                    <textarea id="decryptedApiParam" rows="1" class="mt-1 block w-full px-4 py-3 bg-gray-50 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"></textarea>
+                </div>
+                <div>
+                    <label for="decryptedApiPayload" class="text-sm font-medium text-gray-700">解密后的 JSON 请求体</label>
+                    <textarea id="decryptedApiPayload" rows="6" class="mt-1 block w-full px-4 py-3 bg-gray-50 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- Response View -->
+        <div id="viewResponse" class="hidden">
+            <div class="space-y-4 p-6 border border-gray-200 rounded-lg">
+                <h2 class="text-xl font-bold text-gray-700">EAPI 响应解密器</h2>
+                <div>
+                    <label for="hexResponse" class="text-sm font-medium text-gray-700">加密的响应体 (Hex)</label>
+                    <textarea id="hexResponse" rows="8" class="mt-1 block w-full px-4 py-3 bg-gray-50 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="粘贴从服务器抓包获取的十六进制响应内容..."></textarea>
+                </div>
+                <button id="decryptBtn" class="w-full btn btn-primary text-white font-bold py-3 rounded-lg">解密响应</button>
+                <div>
+                    <label for="decryptedResult" class="text-sm font-medium text-gray-700">解密后的 JSON (明文)</label>
+                    <textarea id="decryptedResult" rows="12" class="mt-1 block w-full px-4 py-3 bg-gray-50 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"></textarea>
+                </div>
+                <button id="copyDecryptBtn" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 rounded-lg">复制解密结果</button>
+            </div>
+        </div>
+        
+        <div id="statusMessage" class="mt-4"></div>
+    </div>
+
+    <script>
+        const elements = {
+            tabs: { request: document.getElementById('tabRequest'), response: document.getElementById('tabResponse') },
+            views: { request: document.getElementById('viewRequest'), response: document.getElementById('viewResponse') },
+            encrypt: { path: document.getElementById('apiUrlPath'), payload: document.getElementById('jsonPayload'), btn: document.getElementById('encryptBtn'), result: document.getElementById('encryptedResult'), copyBtn: document.getElementById('copyEncryptBtn') },
+            paramDecrypt: { input: document.getElementById('paramHexInput'), btn: document.getElementById('decryptParamBtn'), path: document.getElementById('decryptedApiParam'), payload: document.getElementById('decryptedApiPayload') },
+            responseDecrypt: { input: document.getElementById('hexResponse'), btn: document.getElementById('decryptBtn'), result: document.getElementById('decryptedResult'), copyBtn: document.getElementById('copyDecryptBtn') },
+            status: document.getElementById('statusMessage'),
+        };
+
+        const eapiKey = CryptoJS.enc.Utf8.parse('e82ckenh8dichen8');
+        
+        function displayStatus(message, isError = false) {
+            const color = isError ? 'red' : 'green';
+            elements.status.innerHTML = `<div class="bg-${color}-100 border border-${color}-400 text-${color}-700 px-4 py-3 rounded-lg">${message}</div>`;
+            setTimeout(() => elements.status.innerHTML = '', 3000);
+        }
+
+        function copyToClipboard(text) {
+            if (!text) return;
+            navigator.clipboard.writeText(text)
+                .then(() => displayStatus('成功复制到剪贴板！'))
+                .catch(err => displayStatus('复制失败: ' + err, true));
+        }
+
+        function switchTab(tabName) {
+            Object.keys(elements.views).forEach(key => {
+                elements.views[key].classList.toggle('hidden', key !== tabName);
+                elements.tabs[key].classList.toggle('active', key === tabName);
+            });
+        }
+
+        function handleEncrypt() {
+            try {
+                const urlPath = elements.encrypt.path.value.trim();
+                const payloadJson = elements.encrypt.payload.value.trim();
+                if (!urlPath || !payloadJson) throw new Error('API 路径和 JSON 请求体不能为空。');
+                JSON.parse(payloadJson);
+                const digest = CryptoJS.MD5(`nobody${urlPath}use${payloadJson}md5forencrypt`).toString();
+                const textToEncrypt = `${urlPath}-36cd479b6b5-${payloadJson}-36cd479b6b5-${digest}`;
+                const encrypted = CryptoJS.AES.encrypt(CryptoJS.enc.Utf8.parse(textToEncrypt), eapiKey, { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 });
+                elements.encrypt.result.value = encrypted.ciphertext.toString(CryptoJS.enc.Hex).toUpperCase();
+                displayStatus('请求加密成功！');
+            } catch (e) {
+                displayStatus(`加密失败: ${e.message}`, true);
+            }
+        }
+
+        function handleParamDecrypt() {
+            try {
+                const hexString = elements.paramDecrypt.input.value.trim().replace(/\s/g, '');
+                if (!hexString) throw new Error('加密的 Params 不能为空。');
+                const decrypted = CryptoJS.AES.decrypt({ ciphertext: CryptoJS.enc.Hex.parse(hexString) }, eapiKey, { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 });
+                const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+                if (!decryptedText) throw new Error('解密结果为空，请检查输入数据。');
+                
+                const match = decryptedText.match(/(.*?)-36cd479b6b5-(.*?)-36cd479b6b5-([a-f0-9]{32})/);
+                if (!match || match.length < 3) throw new Error('解密后的文本格式不符合 EAPI 请求规范。');
+                
+                elements.paramDecrypt.path.value = match[1];
+                const payload = JSON.parse(match[2]);
+                elements.paramDecrypt.payload.value = JSON.stringify(payload, null, 4);
+                displayStatus('请求解密成功！');
+            } catch (e) {
+                displayStatus(`解密失败: ${e.message}`, true);
+            }
+        }
+        
+        function handleResponseDecrypt() {
+            try {
+                const hexString = elements.responseDecrypt.input.value.trim().replace(/\s/g, '');
+                if (!hexString) throw new Error('加密的响应体不能为空。');
+                const decrypted = CryptoJS.AES.decrypt({ ciphertext: CryptoJS.enc.Hex.parse(hexString) }, eapiKey, { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 });
+                const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+                if (!decryptedText) throw new Error('解密结果为空，请检查密钥或输入数据。');
+                const jsonData = JSON.parse(decryptedText);
+                elements.responseDecrypt.result.value = JSON.stringify(jsonData, null, 4);
+                displayStatus('响应解密成功！');
+            } catch (e) {
+                displayStatus(`解密失败: ${e.message}`, true);
+            }
+        }
+
+        // Event Listeners
+        elements.tabs.request.addEventListener('click', () => switchTab('request'));
+        elements.tabs.response.addEventListener('click', () => switchTab('response'));
+        elements.encrypt.btn.addEventListener('click', handleEncrypt);
+        elements.paramDecrypt.btn.addEventListener('click', handleParamDecrypt);
+        elements.responseDecrypt.btn.addEventListener('click', handleResponseDecrypt);
+        elements.encrypt.copyBtn.addEventListener('click', () => copyToClipboard(elements.encrypt.result.value));
+        elements.responseDecrypt.copyBtn.addEventListener('click', () => copyToClipboard(elements.responseDecrypt.result.value));
+
+    </script>
+</body>
+</html>
+
