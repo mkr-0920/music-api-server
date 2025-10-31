@@ -13,6 +13,8 @@ class Config:
     # --- 下载功能总开关 ---
     # 将此值设置为 False 可以禁用所有的后台下载功能
     DOWNLOADS_ENABLED = False
+    # 如果设置为 False，下载完 master 版本后将跳过 flac 版本。
+    ENABLE_FLAC_DOWNLOAD_WHEN_HAVE_MASTER = False
 
     # -- 网易云音乐 Cookie --
     NETEASE_COOKIE_STR = 'MUSIC_U=;os=pc;appver=9.9.9;'
