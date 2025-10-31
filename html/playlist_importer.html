@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Navidrome 歌单导入工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f0f2f5; }
+        .card { background-color: white; border-radius: 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); }
+        .btn-primary { background: linear-gradient(135deg, #1e3a8a 0%, #3b0764 100%); transition: all 0.3s ease; }
+        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 6px 20px rgba(59, 7, 100, 0.4); }
+        .loader { border-top-color: #1e3a8a; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="card w-full max-w-2xl mx-auto p-8 space-y-6">
+        <div class="flex justify-between items-center">
+            <div class="text-center md:text-left">
+                <h1 class="text-3xl font-bold text-gray-800">Navidrome 歌单导入</h1>
+                <p class="text-gray-500 mt-2">将QQ音乐或网易云音乐的歌单导入您的Navidrome库。</p>
+            </div>
+            <a href="/music_parser.html" class="text-indigo-600 hover:text-indigo-800 font-semibold whitespace-nowrap">&larr; 返回解析器</a>
+        </div>
+        
+        <div class="space-y-4 p-4 border border-gray-200 rounded-lg">
+            <h3 class="font-semibold text-lg text-gray-700">步骤 1: 填写您的服务信息</h3>
+            <div>
+                <label for="apiKey" class="text-sm font-medium text-gray-700">API 密钥 (X-API-Key)</label>
+                <input type="password" id="apiKey" class="mt-1 block w-full px-4 py-3 bg-gray-50 border-gray-300 rounded-lg" placeholder="您的 Music API 密钥">
+            </div>
+             <div>
+                <label for="naviUrl" class="text-sm font-medium text-gray-700">Navidrome 地址</label>
+                <input type="text" id="naviUrl" class="mt-1 block w-full px-4 py-3 bg-gray-50 border-gray-300 rounded-lg" placeholder="例如: http://192.168.1.10:4533">
+            </div>
+             <div>
+                <label for="naviUser" class="text-sm font-medium text-gray-700">Navidrome 用户名</label>
+                <input type="text" id="naviUser" class="mt-1 block w-full px-4 py-3 bg-gray-50 border-gray-300 rounded-lg" placeholder="您的 Navidrome 用户名">
+            </div>
+             <div>
+                <label for="naviPass" class="text-sm font-medium text-gray-700">Navidrome 密码</label>
+                <input type="password" id="naviPass" class="mt-1 block w-full px-4 py-3 bg-gray-50 border-gray-300 rounded-lg" placeholder="您的 Navidrome 密码">
+            </div>
+        </div>
+        
+        <div class="space-y-4 p-4 border border-gray-200 rounded-lg">
+            <h3 class="font-semibold text-lg text-gray-700">步骤 2: 提供在线歌单信息</h3>
+            <div>
+                <label for="platform" class="text-sm font-medium text-gray-700">选择平台</label>
+                <select id="platform" class="mt-1 block w-full px-4 py-3 bg-gray-50 border-gray-300 rounded-lg">
+                    <option value="netease">网易云音乐</option>
+                    <option value="qq">QQ音乐</option>
+                </select>
+            </div>
+            <div>
+                <label for="playlistId" class="text-sm font-medium text-gray-700">歌单 ID</label>
+                <input type="text" id="playlistId" class="mt-1 block w-full px-4 py-3 bg-gray-50 border-gray-300 rounded-lg" placeholder="粘贴在线歌单的ID">
+            </div>
+        </div>
+
+        <button id="submitBtn" class="w-full btn-primary text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center">
+            <span id="btnText">开始导入</span>
+            <div id="loader" class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-6 w-6 ml-3 hidden"></div>
+        </button>
+        
+        <div id="result" class="mt-6"></div>
+    </div>
+
+    <script>
+        const elements = {
+            apiKey: document.getElementById('apiKey'),
+            naviUrl: document.getElementById('naviUrl'),
+            naviUser: document.getElementById('naviUser'),
+            naviPass: document.getElementById('naviPass'),
+            platform: document.getElementById('platform'),
+            playlistId: document.getElementById('playlistId'),
+            submitBtn: document.getElementById('submitBtn'),
+            btnText: document.getElementById('btnText'),
+            loader: document.getElementById('loader'),
+            result: document.getElementById('result'),
+        };
+
+        function showLoading(isLoading, text) {
+            elements.loader.classList.toggle('hidden', !isLoading);
+            elements.submitBtn.disabled = isLoading;
+            elements.btnText.textContent = isLoading ? text : '开始导入';
+        }
+
+        function displayResult(htmlContent) {
+            elements.result.innerHTML = htmlContent;
+        }
+
+        elements.submitBtn.addEventListener('click', async () => {
+            const { apiKey, naviUrl, naviUser, naviPass, platform, playlistId } = elements;
+            const requiredFields = [apiKey, naviUrl, naviUser, naviPass, playlistId];
+
+            if (requiredFields.some(el => !el.value.trim())) {
+                displayResult(`<div class="bg-red-100 border-red-400 text-red-700 px-4 py-3 rounded-lg"><strong>错误:</strong> 所有字段均为必填项。</div>`);
+                return;
+            }
+
+            displayResult('');
+            showLoading(true, '正在导入...');
+            
+            try {
+                // --- 【核心修正】---
+                // 只需发起一个请求，将所有指令信息交给后端处理
+                const importUrl = '/api/navidrome/import';
+                const importPayload = {
+                    navidrome_url: naviUrl.value.trim(),
+                    username: naviUser.value.trim(),
+                    password: naviPass.value.trim(),
+                    platform: platform.value,
+                    online_playlist_id: playlistId.value.trim(),
+                };
+                
+                const importResponse = await fetch(importUrl, {
+                    method: 'POST',
+                    headers: { 'X-API-Key': apiKey.value.trim(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify(importPayload)
+                });
+                const importData = await importResponse.json();
+
+                if (!importResponse.ok) throw new Error(importData.detail || '导入任务失败');
+                
+                const report = importData.data;
+                let reportHtml = `
+                    <div class="bg-green-100 border-green-400 text-green-700 px-4 py-3 rounded-lg">
+                        <strong class="font-bold">导入任务完成!</strong>
+                        <ul class="list-disc list-inside mt-2">
+                            <li>歌单名称: ${report.playlist_name}</li>
+                            <li>在线平台歌曲总数: ${report.total_songs}</li>
+                            <li>成功匹配并添加: ${report.added_count}</li>
+                            <li>未在本地库找到: ${report.not_found_count}</li>
+                        </ul>
+                `;
+                if(report.added_count > 0 && report.found_titles) {
+                    reportHtml += `<p class="font-semibold mt-4">成功添加的歌曲列表:</p><ul class="text-sm list-disc list-inside mt-1 max-h-48 overflow-y-auto bg-white p-2 rounded">`;
+                    report.found_titles.forEach(title => {
+                        reportHtml += `<li>${title}</li>`;
+                    });
+                    reportHtml += `</ul>`;
+                }
+                if(report.not_found_count > 0) {
+                    reportHtml += `<p class="font-semibold mt-4 text-red-600">未能添加的歌曲列表:</p><ul class="text-sm list-disc list-inside mt-1 max-h-48 overflow-y-auto bg-red-50 p-2 rounded">`;
+                    report.not_found_titles.forEach(title => {
+                        reportHtml += `<li>${title}</li>`;
+                    });
+                    reportHtml += `</ul>`;
+                }
+                reportHtml += `</div>`;
+                displayResult(reportHtml);
+
+            } catch (error) {
+                displayResult(`<div class="bg-red-100 border-red-400 text-red-700 px-4 py-3 rounded-lg"><strong>操作失败:</strong> ${error.message}</div>`);
+            } finally {
+                showLoading(false, '开始导入');
+            }
+        });
+    </script>
+</body>
+</html>
+
