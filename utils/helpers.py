@@ -1,5 +1,6 @@
 class Utils:
     """存放共享的辅助函数。"""
+
     @staticmethod
     def format_size(value: int) -> str:
         """将字节大小转换为人类可读的格式 (KB, MB, GB)。"""
@@ -19,8 +20,8 @@ class Utils:
         cookie_dict = {}
         if not text:
             return cookie_dict
-        for item in text.strip().split(';'):
-            if '=' in item:
-                key, value = item.strip().split('=', 1)
+        for item in text.strip().split(";"):
+            if "=" in item:
+                key, value = item.strip().split("=", 1)
                 cookie_dict[key.strip()] = value.strip()
         return cookie_dict

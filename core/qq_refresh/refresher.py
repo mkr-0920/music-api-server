@@ -1,9 +1,13 @@
-import requests
 import json
 import re
 from pathlib import Path
+
+import requests
+
 from core.config import Config
+
 from .utils import sign
+
 
 class QQCookieRefresher:
     def __init__(self):
@@ -15,7 +19,9 @@ class QQCookieRefresher:
         return {
             "comm": {
                 "fPersonality": "0",
-                "tmeLoginType": "2" if self.user_config["qqmusic_key"].startswith("Q_H_L") else "1",
+                "tmeLoginType": "2"
+                if self.user_config["qqmusic_key"].startswith("Q_H_L")
+                else "1",
                 "qq": str(self.user_config["uin"]),
                 "authst": self.user_config["qqmusic_key"],
                 "ct": "11",
@@ -37,13 +43,17 @@ class QQCookieRefresher:
     def _update_config_file(self, new_data: dict):
         """将新的 uin, qqmusic_key, qm_keyst, refresh_token 写回 config.py"""
         try:
-            with open(self.config_path, 'r', encoding='utf-8') as f:
+            with open(self.config_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            
+
             updates = {
                 "uin": str(new_data.get("musicid", self.user_config["uin"])),
-                "qqmusic_key": new_data.get("musickey", self.user_config["qqmusic_key"]),
-                "refresh_token": new_data.get("refresh_token", self.user_config.get("refresh_token", "")),
+                "qqmusic_key": new_data.get(
+                    "musickey", self.user_config["qqmusic_key"]
+                ),
+                "refresh_token": new_data.get(
+                    "refresh_token", self.user_config.get("refresh_token", "")
+                ),
             }
             updates["qm_keyst"] = updates["qqmusic_key"]
 
@@ -52,10 +62,10 @@ class QQCookieRefresher:
                 replacement_func = lambda m, v=value: m.group(1) + v + m.group(2)
                 content = re.sub(pattern, replacement_func, content)
 
-            with open(self.config_path, 'w', encoding='utf-8') as f:
+            with open(self.config_path, "w", encoding="utf-8") as f:
                 f.write(content)
-            
-            print(f"成功将新的Cookie和Token更新到 config.py。")
+
+            print("成功将新的Cookie和Token更新到 config.py。")
             Config.QQ_USER_CONFIG.update(updates)
 
         except Exception as e:
@@ -72,17 +82,26 @@ class QQCookieRefresher:
             json_body = json.dumps(request_body, ensure_ascii=False)
             signature = sign(json_body)
             url = f"https://u6.y.qq.com/cgi-bin/musics.fcg?sign={signature}"
-            headers = {'Content-Type': 'application/json', 'User-Agent': 'okhttp/3.14.9'}
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "okhttp/3.14.9",
+            }
 
-            response = requests.post(url, data=json_body.encode('utf-8'), headers=headers, timeout=10)
+            response = requests.post(
+                url, data=json_body.encode("utf-8"), headers=headers, timeout=10
+            )
             response.raise_for_status()
             response_data = response.json()
             print(f"qq音乐刷新响应：{response_data}")
 
             if response_data.get("req1", {}).get("code") != 0:
                 # 失败时打印完整的服务器响应，方便调试
-                print(f"收到服务器响应: \n{json.dumps(response_data, indent=2, ensure_ascii=False)}")
-                print(f"刷新失败 [账号: {self.user_config['uin']}] 错误码: {response_data.get('req1', {}).get('code')}")
+                print(
+                    f"收到服务器响应: \n{json.dumps(response_data, indent=2, ensure_ascii=False)}"
+                )
+                print(
+                    f"刷新失败 [账号: {self.user_config['uin']}] 错误码: {response_data.get('req1', {}).get('code')}"
+                )
                 return
 
             print(f"刷新成功 [账号: {self.user_config['uin']}]")
@@ -90,4 +109,3 @@ class QQCookieRefresher:
 
         except Exception as e:
             print(f"刷新过程中发生异常: {e}")
-
