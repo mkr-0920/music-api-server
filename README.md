@@ -97,7 +97,7 @@ python metadata_enhancer.py           # 执行写入
 ### 1\. 克隆项目 & 配置
 
 ```bash
-git clone https://github.com/mkr-0920/music-api-server.git
+git clone http://github.com/mkr-0920/music-api-server.git
 cd music-api-server
 cp core/config.py.template core/config.py
 nano core/config.py
@@ -233,28 +233,28 @@ python playlist_sync.py --navidrome-url http://... --username ... --password ...
 ```bash
 curl -G -H "X-API-Key: YOUR_SECRET_KEY" \
   --data-urlencode "q=周杰伦 - 稻香" \
-  "https://127.0.0.1:5000/api/qq"
+  "http://127.0.0.1:5000/api/qq"
 ```
 
 ##### 🎵 按 ID 获取单曲
 
 ```bash
 curl -H "X-API-Key: YOUR_SECRET_KEY" \
-  "https://127.0.0.1:5000/api/netease?id=191179"
+  "http://127.0.0.1:5000/api/netease?id=191179"
 ```
 
 ##### 📥按 ID 下载歌单
 
 ```bash
 curl -H "X-API-Key: YOUR_SECRET_KEY" \
-  "https://127.0.0.1:5000/api/netease?playlist_id=8473556052"
+  "http://127.0.0.1:5000/api/netease?playlist_id=8473556052"
 ```
 
 ##### 📦按 ID 下载专辑
 
 ```bash
 curl -H "X-API-Key: YOUR_SECRET_KEY" \
-  "https://127.0.0.1:5000/api/qq?album_id=003DF0bQ31w25h"
+  "http://127.0.0.1:5000/api/qq?album_id=003DF0bQ31w25h"
 ```
 
 -----
@@ -266,21 +266,21 @@ curl -H "X-API-Key: YOUR_SECRET_KEY" \
 ```bash
 curl -G -H "X-API-Key: YOUR_SECRET_KEY" \
   --data-urlencode "q=周杰伦 - 可爱女人" \
-  "https://127.0.0.1:5000/api/local/search"
+  "http://127.0.0.1:5000/api/local/search"
 ```
 
 #### b) 获取流媒体链接 `/api/local/stream_url/<id>`
 
 ```bash
 curl -G -H "X-API-Key: YOUR_SECRET_KEY" \
-  "https://127.0.0.1:5000/api/local/stream_url/123"
+  "http://127.0.0.1:5000/api/local/stream_url/123"
 ```
 
 #### c) 列出所有本地歌曲 `/api/local/list`
 
 ```bash
 curl -H "X-API-Key: YOUR_SECRET_KEY" \
-  "https://127.0.0.1:5000/api/local/list"
+  "http://127.0.0.1:5000/api/local/list"
 ```
 
 #### d) 删除本地歌曲 `/api/local/delete`
@@ -289,7 +289,7 @@ curl -H "X-API-Key: YOUR_SECRET_KEY" \
 curl -X POST -H "X-API-Key: YOUR_SECRET_KEY" \
   -H "Content-Type: application/json" \
   -d '{"ids": [123, 456]}' \
-  "https://127.0.0.1:5000/api/local/delete"
+  "http://127.0.0.1:5000/api/local/delete"
 ```
 
 -----
@@ -302,7 +302,7 @@ curl -X POST -H "X-API-Key: YOUR_SECRET_KEY" \
 curl -G -H "X-API-Key: YOUR_SECRET_KEY" \
   --data-urlencode "platform=netease" \
   --data-urlencode "id=8473556052" \
-  "https://127.0.0.1:5000/api/playlist/info"
+  "http://127.0.0.1:5000/api/playlist/info"
 ```
 
 #### b) 导入歌单到 Navidrome `/api/navidrome/import`
@@ -317,5 +317,5 @@ curl -X POST -H "X-API-Key: YOUR_SECRET_KEY" \
         "platform": "netease",
         "online_playlist_id": "8473556052"
      }' \
-  "https://127.0.0.1:5000/api/navidrome/import"
+  "http://127.0.0.1:5000/api/navidrome/import"
 ```
