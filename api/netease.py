@@ -93,12 +93,14 @@ class APIConstants:
 class NeteaseMusicAPI:
     def __init__(
         self,
-        cookie_str: str,
+        config_users: dict,
         local_api_instance,
         music_directory: str,
         flac_directory: str,
     ):
-        self.cookies = Utils.parse_cookie_str(cookie_str)
+        """
+        初始化函数变动：第一个参数改为接收用户配置字典
+        """
         self.local_api = local_api_instance
         self.music_directory = music_directory
         self.flac_directory = flac_directory
@@ -114,8 +116,20 @@ class NeteaseMusicAPI:
             "jymaster": "master",
         }
         self.album_cache = {}
-        # 初始化异步HTTP客户端
         self.client = httpx.AsyncClient(timeout=20.0)
+
+        # 初始化多用户 Cookie 池
+        self.cookies_pool = {}
+        if config_users:
+            for uid, cookie_str in config_users.items():
+                self.cookies_pool[str(uid)] = Utils.parse_cookie_str(cookie_str)
+
+        # 设置默认 Cookie (取字典中第一个，或者空)
+        self.default_cookies = (
+            list(self.cookies_pool.values())[0] if self.cookies_pool else {}
+        )
+        # 为了兼容旧代码，self.cookies 指向默认
+        self.cookies = self.default_cookies
 
     def _eapi_encrypt(self, url_path: str, payload: dict) -> dict:
         """加密 EAPI 请求体。"""
@@ -167,18 +181,22 @@ class NeteaseMusicAPI:
         is_eapi=False,
         eapi_path: str = None,
         os_type: str = None,
+        user_id: str = None,
     ):
-        """通用的异步POST请求函数，支持eapi路径覆盖及指定客户端OS类型。"""
+        """
+        支持 eapi 路径覆盖、OS伪装和**多用户切换**。
+        """
         try:
-            # --- 2. 处理 Cookie (核心修改) ---
-            # 创建当前请求专用的 cookies 副本，避免修改全局 self.cookies 导致并发冲突
-            current_cookies = self.cookies.copy()
-            if os_type:
-                current_cookies["os"] = os_type
+            target_cookies = self.default_cookies.copy()  # 默认
 
-            # --- 3. 处理 EAPI 加密 ---
+            if user_id and str(user_id) in self.cookies_pool:
+                target_cookies = self.cookies_pool[str(user_id)].copy()
+                # print(f"[Debug] 切换用户: 使用 ID {user_id} 的 Cookie")
+
+            if os_type:
+                target_cookies["os"] = os_type
+
             if is_eapi:
-                # 如果提供了 eapi_path，则使用它；否则，从URL推断
                 url_path = (
                     eapi_path
                     if eapi_path
@@ -186,26 +204,22 @@ class NeteaseMusicAPI:
                 )
                 data = self._eapi_encrypt(url_path, data)
 
-            # --- 4. 发送请求 ---
-            # 注意这里使用 current_cookies 而不是 self.cookies
             response = await self.client.post(
-                url, headers=self.headers, cookies=current_cookies, data=data
+                url, headers=self.headers, cookies=target_cookies, data=data
             )
             response.raise_for_status()
 
             if not response.content:
                 return None
 
-            # --- 5. 处理响应解密 ---
             if is_eapi and response.headers.get("Content-Type") != "application/json":
                 try:
                     decrypted_text = self._eapi_decrypt(response.content)
                     return json.loads(decrypted_text)
                 except Exception:
-                    return json.loads(response.text)  #  fallback for plain eapi
+                    return json.loads(response.text)
             else:
                 return response.json()
-
         except (httpx.RequestError, json.JSONDecodeError, ValueError) as e:
             print(f"网易云请求或处理出错: {e}")
             return None
@@ -983,9 +997,10 @@ class NeteaseMusicAPI:
         return await self.get_song_details(best_match_id, level)
 
     async def get_playlist_info(self, playlist_id: str) -> dict:
-        """获取歌单详情，包含歌曲ID和专辑名。"""
+        """获取歌单详情，包含歌曲ID、元数据和创建者ID。"""
         data = {"id": playlist_id, "n": 100000, "s": 0}
         response = await self._post_request(APIConstants.PLAYLIST_DETAIL_API, data)
+
         if not response or response.get("code") != 200:
             return {"error": f"获取网易云歌单 (ID: {playlist_id}) 详情失败。"}
 
@@ -994,112 +1009,44 @@ class NeteaseMusicAPI:
             return {"error": "未在响应中找到歌单数据。"}
 
         playlist_name = playlist_data.get("name")
+        creator_id = str(playlist_data.get("userId", ""))  # 获取创建者ID
+
+        # 优先使用 tracks 获取完整信息
         tracks = playlist_data.get("tracks", [])
+        # 如果 tracks 为空（某些情况下），回退到 trackIds 获取纯 ID 列表
+        track_ids = playlist_data.get("trackIds", [])
 
         songs = []
-        for track in tracks:
-            artist_names = "、".join(
-                [ar.get("name", "未知歌手") for ar in track.get("ar", [])]
-            )
-            songs.append(
-                {
-                    "id": str(track.get("id")),
-                    "name": track.get("name", "未知歌曲"),
-                    "artist": artist_names,
-                    "album": track.get("al", {}).get("name"),
-                }
-            )
 
-        return {"playlist_name": playlist_name, "songs": songs}
+        if tracks:
+            for track in tracks:
+                artist_names = "、".join(
+                    [ar.get("name", "未知歌手") for ar in track.get("ar", [])]
+                )
+                songs.append(
+                    {
+                        "id": str(track.get("id")),
+                        "name": track.get("name", "未知歌曲"),
+                        "artist": artist_names,
+                        "album": track.get("al", {}).get("name"),
+                    }
+                )
+        else:
+            # 备用逻辑：只有 ID
+            for item in track_ids:
+                songs.append({"id": str(item.get("id"))})
+
+        return {
+            "playlist_name": playlist_name,
+            "creator_id": creator_id,  # 返回创建者ID
+            "songs": songs,
+        }
 
     def get_playlist_info_sync(self, playlist_id: str) -> dict:
         """
         get_playlist_info 的同步版本，用于在线程池中安全调用。
         """
         return asyncio.run(self.get_playlist_info(playlist_id))
-
-    async def get_daily_recommendations(self) -> dict:
-        """
-        异步获取网易云的每日推荐歌曲列表。
-        """
-        url = APIConstants.DAILY_RECOMMEND_API
-
-        # 要加密的明文 payload
-        payload = {
-            "/api/v3/discovery/recommend/songs": '{"ispush":"false"}',
-            "/api/discovery/recommend/songs/history/recent": "",
-            "header": "{}",
-            "e_r": True,
-        }
-        response = await self._post_request(url, payload, is_eapi=True)
-
-        if not response:
-            return {"error": "获取每日推荐失败，未收到响应。"}
-
-        # 从 "batch" 响应中提取出我们真正需要的部分
-        recommend_data = response.get("/api/v3/discovery/recommend/songs", {})
-        if not recommend_data or recommend_data.get("code") != 200:
-            return {"error": "获取每日推荐失败。", "data": recommend_data}
-
-        data = recommend_data.get("data") or {}
-        raw_list = data.get("dailySongs") or []
-        return raw_list
-
-    async def get_style_recommend_tags(self) -> dict:
-        """
-        获取网易云风格日推的所有可用风格标签。
-        """
-        url = APIConstants.STYLE_TAGS_API
-
-        payload = {"header": "{}", "e_r": True}
-
-        response = await self._post_request(url, payload, is_eapi=True)
-
-        if not response or response.get("code") != 200:
-            return {"error": "获取风格日推标签失败。"}
-
-        # 直接返回 'data' 字段，其中包含了 'categorys' 列表
-        return response.get("data", {"error": "响应中未找到 'data' 字段。"})
-
-    async def get_style_recommend_playlist(self, tag_id: str, category_id: str) -> dict:
-        """
-        异步获取指定风格的日推歌单。
-        这会先设置用户的偏好，然后再获取列表。
-        """
-
-        # --- 告诉网易云服务器我们想要的风格 ---
-        url_step1 = APIConstants.STYLE_TAGS_SAVE_API
-        # 确保ID是数字，并构造成JSON字符串
-        tags_json_str = json.dumps(
-            {"tagIds": [int(tag_id)], "categoryId": int(category_id)}
-        )
-        payload_step1 = {"tags": tags_json_str, "header": "{}", "e_r": True}
-        eapi_path_step1 = "/api/homepage/daily/song/tag/save"
-
-        save_response = await self._post_request(
-            url_step1, payload_step1, is_eapi=True, eapi_path=eapi_path_step1
-        )
-
-        if not save_response or save_response.get("code") != 200:
-            print(f"设置风格日推偏好失败: {save_response}")
-            return {"error": "设置风格偏好失败。"}
-
-        print(f"--- [Style Recommend] 成功设置偏好: tagId={tag_id} ---")
-
-        # --- 获取设置偏好后的风格日推歌单 ---
-        url_step2 = APIConstants.STYLE_PLAYLIST_GET_API
-        payload_step2 = {"header": "{}", "e_r": True}
-        eapi_path_step2 = "/api/homepage/category/daily/song/list"
-
-        playlist_response = await self._post_request(
-            url_step2, payload_step2, is_eapi=True, eapi_path=eapi_path_step2
-        )
-
-        if not playlist_response or playlist_response.get("code") != 200:
-            print(f"获取风格日推歌单失败: {playlist_response}")
-            return {"error": "获取风格日推歌单失败。"}
-
-        return playlist_response.get("data", {"error": "响应中未找到 'data' 字段。"})
 
     async def download_playlist_by_id(self, playlist_id: str, level: str) -> dict:
         """
@@ -1202,48 +1149,120 @@ class NeteaseMusicAPI:
         print(f"已为专辑 {album_id} 启动后台下载线程。")
 
     async def add_songs_to_playlist(
-        self, playlist_id: str, song_ids: List[str]
+        self, playlist_id: str, song_ids: List[str], user_id: str = None
     ) -> bool:
         """向网易云歌单添加歌曲。"""
         url = APIConstants.PLAYLIST_MANIPULATE_API
         # 遵循抓包示例：trackIds 是一个 "['id1', 'id2']" 格式的字符串
         track_ids_json_str = json.dumps([str(sid) for sid in song_ids])
         payload = {"pid": str(playlist_id), "trackIds": track_ids_json_str, "op": "add"}
-        response = await self._post_request(url, payload, is_eapi=True)
+        response = await self._post_request(url, payload, is_eapi=True, user_id=user_id)
         return response and response.get("code") == 200
 
     async def remove_songs_from_playlist(
-        self, playlist_id: str, song_ids: List[str]
+        self, playlist_id: str, song_ids: List[str], user_id: str = None
     ) -> bool:
         """从网易云歌单删除歌曲。"""
         url = APIConstants.PLAYLIST_MANIPULATE_API
         # 遵循抓包示例：trackIds 是一个 "['id1', 'id2']" 格式的字符串
         track_ids_json_str = json.dumps([str(sid) for sid in song_ids])
         payload = {"pid": str(playlist_id), "trackIds": track_ids_json_str, "op": "del"}
-        response = await self._post_request(url, payload, is_eapi=True)
+        response = await self._post_request(url, payload, is_eapi=True, user_id=user_id)
         return response and response.get("code") == 200
 
-    async def reorder_playlist(self, playlist_id: str, all_song_ids: List[str]) -> bool:
+    async def reorder_playlist(
+        self, playlist_id: str, all_song_ids: List[str], user_id: str = None
+    ) -> bool:
         """更新网易云歌单的完整歌曲顺序。"""
         url = APIConstants.PLAYLIST_MANIPULATE_API
         # 遵循抓包示例：trackIds 是一个 "[id1,id2]" 格式的字符串
         track_ids_str = f"[{','.join([str(sid) for sid in all_song_ids])}]"
         payload = {"pid": str(playlist_id), "trackIds": track_ids_str, "op": "update"}
-        response = await self._post_request(url, payload, is_eapi=True)
+        response = await self._post_request(url, payload, is_eapi=True, user_id=user_id)
         return response and response.get("code") == 200
 
-    async def get_private_fm(
-        self, mode: str = "DEFAULT", limit: int = 3, sub_mode: str = None
-    ) -> dict:
+    async def get_daily_recommendations(self, user_id: str = None) -> list | dict:
         """
-        异步获取网易云私人FM歌曲列表。
-        :param mode: 模式 (DEFAULT, FAMILIAR, EXPLORE, SCENE_RCMD)
-        :param limit: 获取数量
-        :param sub_mode: 子模式，仅当 mode 为 SCENE_RCMD 时需要 (例如 "RHYTHM_BLUES")
+        异步获取网易云的每日推荐歌曲列表 (支持指定用户)。
         """
-        url = APIConstants.RADIO_API
+        url = APIConstants.DAILY_RECOMMEND_API
 
-        # 构造基础 payload
+        # 要加密的明文 payload
+        payload = {
+            "/api/v3/discovery/recommend/songs": '{"ispush":"false"}',
+            "/api/discovery/recommend/songs/history/recent": "",
+            "header": "{}",
+            "e_r": True,
+        }
+
+        # 传递 user_id 给 _post_request
+        # 注意：对于 batch 接口，默认推断的 eapi 路径 /api/batch 是正确的，无需手动指定
+        response = await self._post_request(url, payload, is_eapi=True, user_id=user_id)
+
+        if not response:
+            return {"error": "获取每日推荐失败，未收到响应。"}
+
+        # 从 "batch" 响应中提取出我们真正需要的部分
+        recommend_data = response.get("/api/v3/discovery/recommend/songs", {})
+        if not recommend_data or recommend_data.get("code") != 200:
+            return {"error": "获取每日推荐失败。", "data": recommend_data}
+
+        data = recommend_data.get("data") or {}
+        raw_list = data.get("dailySongs") or []
+
+        return raw_list
+
+    async def get_style_recommend_tags(self, user_id: str = None) -> dict:
+        """获取风格日推标签 (支持指定用户)"""
+        url = APIConstants.STYLE_TAGS_API
+        payload = {"header": "{}", "e_r": True}
+        # 传递 user_id
+        response = await self._post_request(url, payload, is_eapi=True, user_id=user_id)
+
+        if not response or response.get("code") != 200:
+            return {"error": "获取风格日推标签失败。"}
+        return response.get("data", {})
+
+    async def get_private_fm_modes(self, user_id: str = None) -> dict:
+        """获取私人FM模式 (支持指定用户)"""
+        url = APIConstants.FM_MODES_API
+        ext_json_data = {
+            "clientLibraAbTest": {"fm-style-reopen": "t3", "fmNameTest0422": "c"},
+            "isHomePageNewFramework": True,
+            "userSetFMMode": True,
+            "enableAutoPlay": True,
+        }
+        payload = {
+            "positionCode": "FMTopModeDialog",
+            "extJson": json.dumps(ext_json_data),
+            "header": "{}",
+            "e_r": True,
+        }
+        # 传递 user_id
+        response = await self._post_request(
+            url, payload, is_eapi=True, user_id=user_id, os_type="android"
+        )
+
+        if not response or response.get("code") != 200:
+            return {"error": "获取私人FM模式失败。"}
+        try:
+            return (
+                response.get("data", {})
+                .get("crossPlatformResource", {})
+                .get("dslData", {})
+            )
+        except AttributeError:
+            return {"error": "解析响应数据失败。"}
+
+    async def get_private_fm(
+        self,
+        mode: str = "DEFAULT",
+        limit: int = 3,
+        sub_mode: str = None,
+        user_id: str = None,
+    ) -> dict:
+        """获取私人FM歌曲 (支持指定用户)"""
+        url = APIConstants.RADIO_API
         payload = {
             "mode": mode,
             "entranceType": "main_bottom_tab",
@@ -1252,63 +1271,48 @@ class NeteaseMusicAPI:
             "header": "{}",
             "e_r": True,
         }
-
-        # 如果是场景推荐模式，且提供了子模式，则添加 subMode
         if mode == "SCENE_RCMD" and sub_mode:
             payload["subMode"] = sub_mode
 
-        response = await self._post_request(
-            url, payload, is_eapi=True, os_type="android"
-        )
+        # 传递 user_id
+        response = await self._post_request(url, payload, is_eapi=True, user_id=user_id)
 
         if not response or response.get("code") != 200:
-            print(f"获取私人FM失败: {response}")
             return {"error": "获取私人FM数据失败。"}
-
-        # 根据您的要求，直接返回 data 列表即可
         return response.get("data", [])
 
-    async def get_private_fm_modes(self) -> dict:
-        """
-        异步获取网易云私人FM的所有可用模式和场景。
-        使用更完整的 Payload 以获取全面的模式列表。
-        """
-        url = APIConstants.FM_MODES_API
+    async def get_style_recommend_playlist(
+        self, tag_id: str, category_id: str, user_id: str = None
+    ) -> dict:
+        """获取风格日推歌单 (支持指定用户)"""
+        # 步骤 1: 设置偏好 (带 user_id)
+        url_step1 = APIConstants.STYLE_TAGS_SAVE_API
+        tags_json_str = json.dumps(
+            {"tagIds": [int(tag_id)], "categoryId": int(category_id)}
+        )
+        payload_step1 = {"tags": tags_json_str, "header": "{}", "e_r": True}
 
-        # 构造 extJson 字符串
-        ext_json_data = {
-            "clientLibraAbTest": {"fm-style-reopen": "t3", "fmNameTest0422": "c"},
-            "isHomePageNewFramework": True,
-            "userSetFMMode": True,
-            "enableAutoPlay": True,
-        }
+        save_response = await self._post_request(
+            url_step1,
+            payload_step1,
+            is_eapi=True,
+            user_id=user_id,
+        )
+        if not save_response or save_response.get("code") != 200:
+            return {"error": "设置风格偏好失败。"}
 
-        # 构造完整的 payload
-        payload = {
-            "positionCode": "FMTopModeDialog",
-            "extJson": json.dumps(ext_json_data),  # 将字典转为 JSON 字符串
-            "header": "{}",
-            "e_r": True,
-        }
+        # 步骤 2: 获取列表 (带 user_id)
+        url_step2 = APIConstants.STYLE_PLAYLIST_GET_API
+        payload_step2 = {"header": "{}", "e_r": True}
 
-        # 调用 _post_request
-
-        response = await self._post_request(
-            url, payload, is_eapi=True, os_type="android"
+        playlist_response = await self._post_request(
+            url_step2,
+            payload_step2,
+            is_eapi=True,
+            user_id=user_id,
         )
 
-        if not response or response.get("code") != 200:
-            print(f"获取私人FM模式失败: {response}")
-            return {"error": "获取私人FM模式失败。"}
+        if not playlist_response or playlist_response.get("code") != 200:
+            return {"error": "获取风格日推歌单失败。"}
 
-        # 提取核心数据 dslData
-        try:
-            dsl_data = (
-                response.get("data", {})
-                .get("crossPlatformResource", {})
-                .get("dslData", {})
-            )
-            print(dsl_data)
-            return dsl_data
-        except AttributeError:
-            return {"error": "解析响应数据失败。"}
+        return playlist_response.get("data", {})

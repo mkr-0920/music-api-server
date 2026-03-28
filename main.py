@@ -47,7 +47,7 @@ app = FastAPI(
 # 实例化所有API客户端
 local_api = LocalMusicAPI(Config.DATABASE_FILE)
 netease_api = NeteaseMusicAPI(
-    Config.NETEASE_COOKIE_STR, local_api, Config.MUSIC_DIRECTORY, Config.FLAC_DIRECTORY
+    Config.NETEASE_USERS, local_api, Config.MUSIC_DIRECTORY, Config.FLAC_DIRECTORY
 )
 qq_api = QQMusicAPI(local_api, Config.MUSIC_DIRECTORY, Config.FLAC_DIRECTORY)
 kuwo_api = KuwoMusicAPI()
@@ -80,12 +80,19 @@ async def index():
 
 
 # --- 在线音乐API路由 ---
-# 网易云日推歌单
+# 网易云日推歌单 (需强制 wyUserId)
 @app.get("/api/netease/daily_recommend", dependencies=[Depends(verify_api_key)])
-async def handle_netease_daily_recommend():
+async def handle_netease_daily_recommend(wyUserId: Optional[str] = None):
     """
     获取网易云音乐的每日推荐歌单。
     """
+    # --- 路由层校验 ---
+    if not wyUserId:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="必须提供 'wyUserId' 参数以获取专属推荐。",
+        )
+
     data = await netease_api.get_daily_recommendations()
 
     if "error" in data:
@@ -95,48 +102,38 @@ async def handle_netease_daily_recommend():
     return {"code": 200, "message": "成功", "data": data}
 
 
-# 按风格的日推
+# 获取风格标签 (需强制 wyUserId)
 @app.get("/api/netease/style_tags", dependencies=[Depends(verify_api_key)])
-async def handle_get_style_tags():
-    """
-    获取网易云风格日推的所有可用风格标签。
-    """
-    data = await netease_api.get_style_recommend_tags()
-
-    if "error" in data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=data["error"])
-
-    # data 对象本身就包含了 categorys 列表
-    return {"code": 200, "message": "成功", "data": data}
-
-
-@app.get("/api/netease/style_recommend", dependencies=[Depends(verify_api_key)])
-async def handle_netease_style_recommend(tag_id: str, category_id: str):
-    """
-    获取指定风格的每日推荐歌单。
-    """
-    if not tag_id or not category_id:
+async def handle_get_style_tags(wyUserId: Optional[str] = None):
+    """获取风格日推标签，必须指定 wyUserId"""
+    # --- 路由层校验 ---
+    if not wyUserId:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="必须提供 'tag_id' 和 'category_id' 参数。",
+            detail="必须提供 'wyUserId' 参数以获取专属推荐。",
         )
 
-    data = await netease_api.get_style_recommend_playlist(tag_id, category_id)
+    data = await netease_api.get_style_recommend_tags(user_id=wyUserId)
 
     if "error" in data:
+        # 如果是 400 错误（如用户ID未配置），这里也可以透传
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=data["error"])
 
-    # data 对象本身就是 response.get('data')，直接返回
     return {"code": 200, "message": "成功", "data": data}
 
 
-# 私人FM
+# 获取私人FM模式 (需强制 wyUserId)
 @app.get("/api/netease/radio/modes", dependencies=[Depends(verify_api_key)])
-async def handle_netease_radio_modes():
-    """
-    获取网易云私人FM的所有可用模式和场景列表。
-    """
-    data = await netease_api.get_private_fm_modes()
+async def handle_netease_radio_modes(wyUserId: Optional[str] = None):
+    """获取私人FM模式列表，必须指定 wyUserId"""
+    # --- 路由层校验 ---
+    if not wyUserId:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="必须提供 'wyUserId' 参数以获取专属推荐。",
+        )
+
+    data = await netease_api.get_private_fm_modes(user_id=wyUserId)
 
     if "error" in data:
         raise HTTPException(
@@ -146,29 +143,63 @@ async def handle_netease_radio_modes():
     return {"code": 200, "message": "成功", "data": data}
 
 
+# 获取私人FM歌曲 (需强制 wyUserId)
 @app.get("/api/netease/radio", dependencies=[Depends(verify_api_key)])
 async def handle_netease_radio(
-    mode: str = "DEFAULT", limit: int = 3, sub_mode: Optional[str] = None
+    mode: str = "DEFAULT",
+    limit: int = 3,
+    sub_mode: Optional[str] = None,
+    wyUserId: Optional[str] = None,
 ):
-    """
-    获取网易云私人FM。
-    - mode: DEFAULT (默认), FAMILIAR (熟悉), EXPLORE (探索), SCENE_RCMD (场景)
-    - limit: 返回歌曲数量
-    - sub_mode: 当 mode=SCENE_RCMD 时必填 (例如 "RHYTHM_BLUES")
-    """
-    # 简单的参数校验
+    """获取私人FM歌曲，必须指定 wyUserId"""
+    # --- 路由层校验 ---
+    if not wyUserId:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="必须提供 'wyUserId' 参数以获取专属推荐。",
+        )
+
     if mode == "SCENE_RCMD" and not sub_mode:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="当 mode 为 SCENE_RCMD 时，必须提供 sub_mode 参数。",
         )
 
-    data = await netease_api.get_private_fm(mode, limit, sub_mode)
+    data = await netease_api.get_private_fm(mode, limit, sub_mode, user_id=wyUserId)
 
     if isinstance(data, dict) and "error" in data:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=data["error"]
         )
+
+    return {"code": 200, "message": "成功", "data": data}
+
+
+# 获取风格日推歌单 (需强制 wyUserId)
+@app.get("/api/netease/style_recommend", dependencies=[Depends(verify_api_key)])
+async def handle_netease_style_recommend(
+    tag_id: str, category_id: str, wyUserId: Optional[str] = None
+):
+    """获取指定风格推荐歌单，必须指定 wyUserId"""
+    # --- 路由层校验 ---
+    if not wyUserId:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="必须提供 'wyUserId' 参数以获取专属推荐。",
+        )
+
+    if not tag_id or not category_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="必须提供 'tag_id' 和 'category_id' 参数。",
+        )
+
+    data = await netease_api.get_style_recommend_playlist(
+        tag_id, category_id, user_id=wyUserId
+    )
+
+    if "error" in data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=data["error"])
 
     return {"code": 200, "message": "成功", "data": data}
 
@@ -213,100 +244,102 @@ def _parse_playlist_url(url_str: str) -> (Optional[str], Optional[str], Optional
 @app.post("/api/netease/sync", dependencies=[Depends(verify_api_key)])
 async def handle_playlist_sync(sync_request: PlaylistSyncRequest):
     """
-    接收前端的完整歌单状态，并一步将其同步到在线平台。
+    执行“增量同步”。
+    自动根据歌单创建者ID切换对应的Cookie进行操作，实现多用户支持。
     """
-    platform, online_playlist_id, creator_id = _parse_playlist_url(sync_request.listId)
+    # 1. 解析 URL 获取 ID
+    platform, online_playlist_id, _ = _parse_playlist_url(sync_request.listId)
 
     if not platform:
-        raise HTTPException(status_code=400, detail="listId 格式不正确或不受支持。")
+        if sync_request.listId.isdigit():
+            platform, online_playlist_id = "wy", sync_request.listId
+        else:
+            raise HTTPException(status_code=400, detail="listId 格式不正确。")
 
     if platform != "wy":
         raise HTTPException(
             status_code=400, detail=f"平台 '{platform}' 尚不支持同步功能。"
         )
 
-    # 定义自己的网易云用户ID
-    USER_ID = "3891360967"
-    if not creator_id or creator_id != USER_ID:
-        print(
-            f"[SYNC] 权限错误: 尝试修改一个不属于您的歌单 (ID: {online_playlist_id}, Creator: {creator_id})"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="权限不足：您没有权限修改这个歌单 (创建者ID不匹配)。",
-        )
     print(f"--- [SYNC] 开始同步歌单: {online_playlist_id} ---")
 
     try:
-        # 获取前端发送的目标状态
+        # 2. 获取网易云的【当前状态】（包含创建者信息）
+        print(f"[SYNC] 正在获取 {platform} 歌单 {online_playlist_id} 的当前状态...")
+        # 这里使用默认 Cookie 获取信息即可，读操作通常权限较低
+        current_playlist_data = await netease_api.get_playlist_info(online_playlist_id)
+
+        if "error" in current_playlist_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"获取网易云歌单失败: {current_playlist_data['error']}",
+            )
+
+        # --- 多用户鉴权与切换 ---
+        real_creator_id = current_playlist_data.get("creator_id")
+
+        # 检查该创建者ID是否在我们的配置中
+        if real_creator_id not in Config.NETEASE_USERS:
+            print(
+                f"[SYNC] 权限错误: 歌单创建者 ({real_creator_id}) 未在配置中找到，无法操作。"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"权限不足：您没有配置用户ID为 {real_creator_id} 的Cookie，无法修改此歌单。",
+            )
+
+        # 既然在配置中，说明我们有权操作。后续操作将使用这个 ID。
+        active_user_id = real_creator_id
+        print(f"[SYNC] 鉴权通过。将使用用户 {active_user_id} 的身份进行同步。")
+        # -----------------------------------
+
+        # 3. 准备数据
+        current_song_ids = set(
+            song["id"] for song in current_playlist_data.get("songs", [])
+        )
+
         target_song_ids = []
         for song in sync_request.songs:
             if song.source == "wy" and song.songmid:
                 try:
-                    raw_id = song.songmid.split("_", 1)[1]
+                    raw_id = (
+                        song.songmid.split("_")[1]
+                        if "_" in song.songmid
+                        else song.songmid
+                    )
                     target_song_ids.append(raw_id)
                 except Exception:
-                    print(f"[SYNC] 警告: 跳过格式错误的 songmid: {song.songmid}")
-
+                    pass
         target_set = set(target_song_ids)
 
-        # 获取网易云的当前状态
-        print(f"[SYNC] 正在获取 {platform} 歌单 {online_playlist_id} 的当前状态...")
-        current_playlist_data = await netease_api.get_playlist_info(online_playlist_id)
-        if "error" in current_playlist_data:
-            raise HTTPException(
-                status_code=404,
-                detail=f"获取网易云歌单当前状态失败: {current_playlist_data['error']}",
-            )
-
-        current_song_ids = set(
-            song["id"] for song in current_playlist_data.get("songs", [])
-        )
-        # print(f"target_set: {target_set}")
-        # print(f"current_song_ids: {current_song_ids}")
-
-        # 计算差异 (Delta)
+        # 4. 计算差异
         songs_to_add = list(target_set - current_song_ids)
         songs_to_delete = list(current_song_ids - target_set)
 
-        # 执行操作
+        # 5. 执行操作 (注意：这里都传入了 active_user_id)
         if songs_to_delete:
             print(f"[SYNC] 正在删除 {len(songs_to_delete)} 首歌曲...")
-            if not await netease_api.remove_songs_from_playlist(
-                online_playlist_id, songs_to_delete
-            ):
-                raise HTTPException(
-                    status_code=500, detail="从网易云歌单删除歌曲时失败。"
-                )
+            await netease_api.remove_songs_from_playlist(
+                online_playlist_id, songs_to_delete, user_id=active_user_id
+            )
 
         if songs_to_add:
             print(f"[SYNC] 正在添加 {len(songs_to_add)} 首歌曲...")
-            if not await netease_api.add_songs_to_playlist(
-                online_playlist_id, songs_to_add
-            ):
-                raise HTTPException(
-                    status_code=500, detail="向网易云歌单添加歌曲时失败。"
-                )
+            await netease_api.add_songs_to_playlist(
+                online_playlist_id, songs_to_add, user_id=active_user_id
+            )
 
-        # 执行排序
         if target_song_ids:
-            print("[SYNC] 正在更新歌单的最终顺序...")
-            if not await netease_api.reorder_playlist(
-                online_playlist_id, target_song_ids
-            ):
-                raise HTTPException(
-                    status_code=500, detail="更新网易云歌单顺序时失败。"
-                )
+            print("[SYNC] 正在更新歌单顺序...")
+            await netease_api.reorder_playlist(
+                online_playlist_id, target_song_ids, user_id=active_user_id
+            )
 
         print(f"--- [SYNC] 歌单 {online_playlist_id} 同步成功! ---")
         return {
             "code": 200,
             "message": "同步成功",
-            "data": {
-                "added": len(songs_to_add),
-                "deleted": len(songs_to_delete),
-                "total": len(target_song_ids),
-            },
+            "data": {"added": len(songs_to_add), "deleted": len(songs_to_delete)},
         }
 
     except Exception as e:
