@@ -120,12 +120,12 @@ def enhance_metadata(target_directory, dry_run=False, start_time=None):
         netease_api = NeteaseMusicAPI(
             Config.NETEASE_COOKIE_STR,
             None,
-            Config.MUSIC_DIRECTORY,
+            Config.MASTER_DIRECTORY,
             Config.FLAC_DIRECTORY,
         )
     except TypeError:
         netease_api = NeteaseMusicAPI(
-            Config.NETEASE_COOKIE_STR, None, Config.MUSIC_DIRECTORY
+            Config.NETEASE_COOKIE_STR, None, Config.MASTER_DIRECTORY
         )
 
     music_path = Path(target_directory)
@@ -275,7 +275,7 @@ if __name__ == "__main__":
         "directory",
         nargs="?",
         default=None,
-        help="要扫描的特定音乐目录路径。\n如果未提供此参数，脚本将自动扫描配置文件中定义的\nMUSIC_DIRECTORY 和 FLAC_DIRECTORY (如果存在)。",
+        help="要扫描的特定音乐目录路径。\n如果未提供此参数，脚本将自动扫描配置文件中定义的\nMASTER_DIRECTORY 和 FLAC_DIRECTORY (如果存在)。",
     )
     parser.add_argument(
         "--dry-run",
@@ -316,10 +316,10 @@ if __name__ == "__main__":
     else:
         print("--- 未指定目录，将扫描配置文件中的默认目录 ---")
         scanned_any = False
-        if hasattr(Config, "MUSIC_DIRECTORY") and Config.MUSIC_DIRECTORY:
-            print(f"\n[1/2] 开始扫描主音乐目录: {Config.MUSIC_DIRECTORY}")
+        if hasattr(Config, "MASTER_DIRECTORY") and Config.MASTER_DIRECTORY:
+            print(f"\n[1/2] 开始扫描主音乐目录: {Config.MASTER_DIRECTORY}")
             enhance_metadata(
-                target_directory=Config.MUSIC_DIRECTORY,
+                target_directory=Config.MASTER_DIRECTORY,
                 dry_run=args.dry_run,
                 start_time=start_time_obj,
             )

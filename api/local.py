@@ -80,6 +80,7 @@ class LocalMusicAPI:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON;")
+
         # songs 表 (主表)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS songs (
@@ -104,9 +105,12 @@ class LocalMusicAPI:
                 discnumber TEXT,
                 totaldiscs TEXT,
                 date TEXT,
-                year TEXT
+                year TEXT,
+                title TEXT,
+                is_instrumental INTEGER DEFAULT 0
             )
         """)
+
         # cover_art 表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS cover_art (
@@ -116,6 +120,7 @@ class LocalMusicAPI:
                 FOREIGN KEY (song_id) REFERENCES songs (id) ON DELETE CASCADE
             )
         """)
+
         # lyrics 表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS lyrics (
@@ -125,6 +130,7 @@ class LocalMusicAPI:
                 FOREIGN KEY (song_id) REFERENCES songs (id) ON DELETE CASCADE
             )
         """)
+
         # playlist_mappings 表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS playlist_mappings (
@@ -137,6 +143,7 @@ class LocalMusicAPI:
                 UNIQUE(platform, online_playlist_id)
             )
         """)
+
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_search_key ON songs (search_key)"
         )
@@ -198,7 +205,7 @@ class LocalMusicAPI:
         cover_data: bytes,
         cover_mime: str,
     ):
-        """向所有3个表中写入完整的歌曲元数据"""
+        """向所有3个表中写入完整的歌曲元数据 (包含伴奏字段)"""
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
@@ -208,8 +215,9 @@ class LocalMusicAPI:
                 INSERT OR IGNORE INTO songs (
                     file_path, search_key, quality, duration_ms, album, artist,
                     albumartist, composer, lyricist, arranger, producer, mix, mastering,
-                    bpm, genre, tracknumber, totaltracks, discnumber, totaldiscs, date, year
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    bpm, genre, tracknumber, totaltracks, discnumber, totaldiscs, date, year,
+                    title, is_instrumental
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     file_path,
@@ -233,6 +241,10 @@ class LocalMusicAPI:
                     song_info.get("totaldiscs"),
                     song_info.get("date"),
                     song_info.get("year"),
+                    song_info.get(
+                        "title"
+                    ),  # 从字典取 title (如果是在线下载的，可能没有传，由 scanner 后续补充)
+                    song_info.get("is_instrumental", 0),  # 默认为 0，代表原曲
                 ),
             )
             song_id = cursor.lastrowid
@@ -272,7 +284,11 @@ class LocalMusicAPI:
             results = self._query_db(
                 "SELECT quality FROM songs WHERE search_key = ?", (search_key,)
             )
-            return [row[0] for row in results] if results else []
+            return (
+                [row.get("quality") for row in results if row.get("quality")]
+                if results
+                else []
+            )
 
         all_versions = self._query_db(
             "SELECT quality, album FROM songs WHERE search_key = ?", (search_key,)
@@ -282,10 +298,14 @@ class LocalMusicAPI:
 
         normalized_input_album = self._normalize_album_title(album)
         matching_qualities = []
-        for quality, db_album in all_versions:
+
+        for row in all_versions:
+            db_quality = row.get("quality")
+            db_album = row.get("album")
+
             normalized_db_album = self._normalize_album_title(db_album)
             if normalized_input_album == normalized_db_album:
-                matching_qualities.append(quality)
+                matching_qualities.append(db_quality)
 
         return list(set(matching_qualities))
 
@@ -293,12 +313,12 @@ class LocalMusicAPI:
         self, query: str, mode: str = "any", limit: int = 20, offset: int = 0
     ) -> dict | None:
         """
-        在本地音乐库中执行高级搜索，并返回文件大小。
+        在本地音乐库中执行高级搜索，并返回文件大小和伴奏标记。
         """
         search_term = f"%{query}%"
 
-        # --- 在SQL查询中加入 file_path ---
-        select_clause = "SELECT id, search_key, duration_ms, album, quality, artist, title, albumartist, discnumber, tracknumber, file_path"
+        # --- 查询中加入 is_instrumental ---
+        select_clause = "SELECT id, search_key, duration_ms, album, quality, artist, title, albumartist, discnumber, tracknumber, file_path, is_instrumental"
         from_clause = "FROM songs"
 
         where_clause = ""
@@ -314,18 +334,9 @@ class LocalMusicAPI:
             where_clause = "WHERE title LIKE ?"
             args.append(search_term)
         elif mode == "any":
-            # 使用正则表达式来解析关键词
-            # 逻辑：匹配 "双引号内的内容" 或者 不含空格的连续字符
-            # 例如: ' "Taylor Swift" 1989 ' -> ['Taylor Swift', '1989']
-            # 例如: ' 周杰伦 七里香 ' -> ['周杰伦', '七里香']
             pattern = r'"([^"]*)"|(\S+)'
             matches = re.findall(pattern, query)
-
-            # 提取匹配结果（re.findall 返回的是元组，需要处理）
-            # m[0] 是引号内的内容，m[1] 是普通词
             keywords = [m[0] if m[0] else m[1] for m in matches]
-
-            # 过滤掉空字符串
             keywords = [k for k in keywords if k.strip()]
 
             if not keywords:
@@ -341,16 +352,12 @@ class LocalMusicAPI:
 
                 and_blocks = []
                 for kw in keywords:
-                    # 构建类似 (artist LIKE ? OR title LIKE ? ...) 的块
                     or_conditions = [f"{field} LIKE ?" for field in fields_to_search]
                     or_block = f"({' OR '.join(or_conditions)})"
                     and_blocks.append(or_block)
-
-                    # 为这个关键词添加参数
                     kw_term = f"%{kw}%"
                     args.extend([kw_term] * len(fields_to_search))
 
-                # 用 AND 连接所有块
                 where_clause = f"WHERE {' AND '.join(and_blocks)}"
         else:
             return {"songs": [], "total_count": 0}
@@ -377,14 +384,13 @@ class LocalMusicAPI:
             file_size_bytes = 0
             file_path = result_dict.get("file_path")
 
-            # --- 获取文件大小 ---
             if file_path and os.path.exists(file_path):
                 try:
                     file_size_bytes = os.path.getsize(file_path)
                 except OSError as e:
                     print(f"无法获取文件大小 {file_path}: {e}")
 
-            # --- 格式化并添加到响应中 ---
+            # --- 格式化并添加到响应中，包含 is_instrumental ---
             songs.append(
                 {
                     "id": result_dict["id"],
@@ -394,6 +400,7 @@ class LocalMusicAPI:
                     "quality": result_dict["quality"],
                     "artist": result_dict["artist"],
                     "size": Utils.format_size(file_size_bytes),
+                    "is_instrumental": bool(result_dict.get("is_instrumental", 0)),
                 }
             )
 

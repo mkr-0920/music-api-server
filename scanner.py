@@ -1,9 +1,10 @@
 import os
 import pathlib
+import re
 import sqlite3
 
-from mutagen.flac import FLAC
-from mutagen.id3 import ID3
+from mutagen.flac import FLAC, Picture
+from mutagen.id3 import APIC, ID3, TALB, TCON, TDRC, TIT2, TPE1, TYER, USLT
 from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 from mutagen.wave import WAVE
@@ -14,7 +15,7 @@ from core.config import Config
 
 def get_comprehensive_metadata(file_path):
     """
-    使用mutagen获取最完整的音频文件元数据。
+    使用 mutagen 获取最完整的音频文件元数据。
     返回一个包含所有文本信息、封面数据和歌词的字典。
     """
     metadata = {
@@ -163,8 +164,88 @@ def get_comprehensive_metadata(file_path):
         return None
 
 
+def embed_cloned_metadata_to_file(file_path, cloned_meta):
+    """将从数据库克隆来的元数据，物理写入到伴奏文件中"""
+    try:
+        path_obj = pathlib.Path(file_path)
+        ext = path_obj.suffix.lower()
+
+        title = cloned_meta.get("title")
+        artist = cloned_meta.get("artist")
+        album = cloned_meta.get("album")
+        genre = cloned_meta.get("genre")
+        date_str = cloned_meta.get("date")
+        year_str = cloned_meta.get("year")
+        cover_data = cloned_meta.get("cover_data")
+        cover_mime = cloned_meta.get("cover_mime", "image/jpeg")
+        lyrics = cloned_meta.get("lyrics")
+
+        if ext == ".flac":
+            audio = FLAC(file_path)
+            if title:
+                audio["title"] = title
+            if artist:
+                audio["artist"] = artist
+            if album:
+                audio["album"] = album
+            if genre:
+                audio["genre"] = genre
+            if date_str:
+                audio["date"] = date_str
+            if year_str:
+                audio["year"] = year_str
+            if lyrics:
+                audio["lyrics"] = lyrics
+
+            if cover_data:
+                audio.clear_pictures()
+                picture = Picture()
+                picture.type = 3
+                picture.mime = cover_mime
+                picture.desc = "Cover"
+                picture.data = cover_data
+                audio.add_picture(picture)
+            audio.save()
+
+        elif ext == ".mp3" or ext == ".wav":
+            # Mutagen 对带有 ID3 的 WAV 也支持通过类似方式写入
+            audio = MP3(file_path, ID3=ID3) if ext == ".mp3" else WAVE(file_path)
+            if audio.tags is None:
+                audio.add_tags()
+
+            if title:
+                audio.tags.add(TIT2(encoding=3, text=title))
+            if artist:
+                audio.tags.add(TPE1(encoding=3, text=artist))
+            if album:
+                audio.tags.add(TALB(encoding=3, text=album))
+            if genre:
+                audio.tags.add(TCON(encoding=3, text=genre))
+            if date_str:
+                audio.tags.add(TDRC(encoding=3, text=date_str))
+            if year_str:
+                audio.tags.add(TYER(encoding=3, text=year_str))
+            if lyrics:
+                audio.tags.add(USLT(encoding=3, text=lyrics))
+
+            if cover_data:
+                audio.tags.add(
+                    APIC(
+                        encoding=3,
+                        mime=cover_mime,
+                        type=3,
+                        desc="Cover",
+                        data=cover_data,
+                    )
+                )
+            audio.save()
+
+    except Exception as e:
+        print(f"  - [警告] 向伴奏文件 {file_path} 物理写入元数据时出错: {e}")
+
+
 def create_database():
-    """创建包含所有元数据表和字段的数据库。"""
+    """创建包含所有元数据表和字段的数据库 (全新建表版本)。"""
     conn = sqlite3.connect(Config.DATABASE_FILE)
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON;")
@@ -194,7 +275,8 @@ def create_database():
             totaldiscs TEXT,
             date TEXT,
             year TEXT,
-            title TEXT
+            title TEXT,
+            is_instrumental INTEGER DEFAULT 0
         )
     """)
 
@@ -233,30 +315,29 @@ def create_database():
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_search_key ON songs (search_key)")
 
-    # --- 检查并添加 title 列（用于兼容旧数据库）---
-    cursor.execute("PRAGMA table_info(songs)")
-    columns = [column[1] for column in cursor.fetchall()]
-    if "title" not in columns:
-        cursor.execute("ALTER TABLE songs ADD COLUMN title TEXT")
-        print("已成功为旧数据库添加 'title' 字段。")
-
     conn.commit()
     conn.close()
-    print(f"数据库 '{Config.DATABASE_FILE}' 初始化/升级成功。")
+    print(f"数据库 '{Config.DATABASE_FILE}' 初始化成功。")
 
 
 def scan_and_index_music():
-    """扫描音乐文件夹，提取所有元数据并存入数据库。"""
+    """扫描音乐文件夹，提取所有元数据并存入数据库。支持伴奏克隆。"""
 
     dirs_to_scan = []
-    if hasattr(Config, "MUSIC_DIRECTORY") and Config.MUSIC_DIRECTORY:
-        dirs_to_scan.append(Config.MUSIC_DIRECTORY)
+    if hasattr(Config, "MASTER_DIRECTORY") and Config.MASTER_DIRECTORY:
+        dirs_to_scan.append(Config.MASTER_DIRECTORY)
     if hasattr(Config, "FLAC_DIRECTORY") and Config.FLAC_DIRECTORY:
         if Config.FLAC_DIRECTORY not in dirs_to_scan:
             dirs_to_scan.append(Config.FLAC_DIRECTORY)
+    if hasattr(Config, "LOSSY_DIRECTORY") and Config.LOSSY_DIRECTORY:
+        if Config.LOSSY_DIRECTORY not in dirs_to_scan:
+            dirs_to_scan.append(Config.LOSSY_DIRECTORY)
+    if hasattr(Config, "INSTRUMENTAL_DIRECTORY") and Config.INSTRUMENTAL_DIRECTORY:
+        if Config.INSTRUMENTAL_DIRECTORY not in dirs_to_scan:
+            dirs_to_scan.append(Config.INSTRUMENTAL_DIRECTORY)
 
     if not dirs_to_scan:
-        print("错误：未在 core/config.py 中配置任何音乐目录。")
+        print("错误：未在 core/config.py 中配置任何音乐扫描目录。")
         return
 
     converter = OpenCC("t2s")
@@ -283,13 +364,91 @@ def scan_and_index_music():
                     continue
 
                 print(f"\n正在索引新文件: {file.name}")
-                metadata = get_comprehensive_metadata(file)
+
+                # --- 伴奏识别与克隆核心逻辑 ---
+                is_instrumental = 0
+                metadata = None
+
+                # 检查是否符合严格的伴奏命名规范: "歌手 - 歌名 专辑名 (Instrumental).ext"
+                if "(Instrumental)" in file.stem:
+                    is_instrumental = 1
+                    # 正则提取: 捕获前方的 "歌手 - 歌名" 作为 search_key
+                    match = re.match(
+                        r"^(.+? - .+?)(?: .+?)? \(Instrumental\)", file.stem
+                    )
+
+                    if match:
+                        raw_search_key = match.group(1)
+                        search_key = converter.convert(raw_search_key)
+
+                        print(f"  - 识别为伴奏文件，正在寻找原曲匹配: {search_key}")
+                        # 去数据库寻找原曲
+                        cursor.execute(
+                            "SELECT * FROM songs WHERE search_key = ? AND is_instrumental = 0 LIMIT 1",
+                            (search_key,),
+                        )
+                        orig_row = cursor.fetchone()
+
+                        if orig_row:
+                            columns = [desc[0] for desc in cursor.description]
+                            orig_data = dict(zip(columns, orig_row))
+
+                            # 获取真实的时长 (伴奏自己的实际音频时长)
+                            basic_meta = get_comprehensive_metadata(file)
+                            actual_duration = (
+                                basic_meta.get("duration_ms", 0) if basic_meta else 0
+                            )
+
+                            # 构建克隆字典
+                            metadata = orig_data.copy()
+                            metadata["duration_ms"] = actual_duration
+                            metadata["title"] = (
+                                f"{orig_data.get('title', '未知')} (Instrumental)"
+                            )
+                            metadata["is_instrumental"] = 1
+                            metadata["cover_data"] = None
+                            metadata["cover_mime"] = None
+                            metadata["lyrics"] = None
+
+                            # 获取并装填原曲封面
+                            cursor.execute(
+                                "SELECT image_data, mime_type FROM cover_art WHERE song_id = ?",
+                                (orig_data["id"],),
+                            )
+                            cover_row = cursor.fetchone()
+                            if cover_row:
+                                metadata["cover_data"] = cover_row[0]
+                                metadata["cover_mime"] = cover_row[1]
+
+                            # 获取并装填原曲歌词
+                            cursor.execute(
+                                "SELECT lyrics FROM lyrics WHERE song_id = ?",
+                                (orig_data["id"],),
+                            )
+                            lyrics_row = cursor.fetchone()
+                            if lyrics_row:
+                                metadata["lyrics"] = lyrics_row[0]
+
+                            print("  - [成功] 已匹配原曲，正在向伴奏物理写入元数据...")
+                            embed_cloned_metadata_to_file(file_path, metadata)
+                        else:
+                            print(
+                                f"  - [警告] 未在数据库找到原曲 '{search_key}'，作为独立文件解析。"
+                            )
+
+                # 如果不是伴奏，或者伴奏没匹配到原曲，回退到常规解析
+                if not metadata:
+                    metadata = get_comprehensive_metadata(file)
+                    if metadata:
+                        metadata["is_instrumental"] = is_instrumental
+                        if is_instrumental and not metadata.get("title"):
+                            metadata["title"] = file.stem
 
                 if not metadata:
                     print("  - 无法读取元数据，跳过。")
                     continue
 
-                if not metadata["search_key"]:
+                if not metadata.get("search_key"):
                     original_stem = file.stem
                     search_key_raw = (
                         original_stem.removesuffix(" [M]")
@@ -297,10 +456,7 @@ def scan_and_index_music():
                         else original_stem
                     )
                     metadata["search_key"] = converter.convert(search_key_raw)
-                    print(
-                        f"  - 警告: 缺少元数据，已从文件名回退 search_key: {metadata['search_key']}"
-                    )
-                    if not metadata["artist"] or not metadata["title"]:
+                    if not metadata.get("artist") or not metadata.get("title"):
                         try:
                             parts = search_key_raw.split(" - ", 1)
                             if len(parts) == 2:
@@ -309,6 +465,7 @@ def scan_and_index_music():
                         except:
                             pass
 
+                # 音质判定 (新增对伴奏的音质标记)
                 if file.stem.endswith(" [M]"):
                     quality = "master"
                 elif file_suffix == ".flac":
@@ -329,55 +486,59 @@ def scan_and_index_music():
                             file_path, search_key, quality, duration_ms, album, artist,
                             albumartist, composer, lyricist, arranger, producer, mix, mastering,
                             bpm, genre, tracknumber, totaltracks, discnumber, totaldiscs, date, year,
-                            title
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            title, is_instrumental
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             file_path,
-                            metadata["search_key"],
+                            metadata.get("search_key"),
                             quality,
-                            metadata["duration_ms"],
-                            metadata["album"],
-                            metadata["artist"],
-                            metadata["albumartist"],
-                            metadata["composer"],
-                            metadata["lyricist"],
-                            metadata["arranger"],
-                            metadata["producer"],
-                            metadata["mix"],
-                            metadata["mastering"],
-                            metadata["bpm"],
-                            metadata["genre"],
-                            metadata["tracknumber"],
-                            metadata["totaltracks"],
-                            metadata["discnumber"],
-                            metadata["totaldiscs"],
-                            metadata["date"],
-                            metadata["year"],
-                            metadata["title"],
+                            metadata.get("duration_ms", 0),
+                            metadata.get("album"),
+                            metadata.get("artist"),
+                            metadata.get("albumartist"),
+                            metadata.get("composer"),
+                            metadata.get("lyricist"),
+                            metadata.get("arranger"),
+                            metadata.get("producer"),
+                            metadata.get("mix"),
+                            metadata.get("mastering"),
+                            metadata.get("bpm"),
+                            metadata.get("genre"),
+                            metadata.get("tracknumber"),
+                            metadata.get("totaltracks"),
+                            metadata.get("discnumber"),
+                            metadata.get("totaldiscs"),
+                            metadata.get("date"),
+                            metadata.get("year"),
+                            metadata.get("title"),
+                            metadata.get("is_instrumental", 0),
                         ),
                     )
 
                     song_id = cursor.lastrowid
 
-                    if metadata["cover_data"]:
+                    if metadata.get("cover_data"):
                         cursor.execute(
                             "INSERT OR IGNORE INTO cover_art (song_id, mime_type, image_data) VALUES (?, ?, ?)",
-                            (song_id, metadata["cover_mime"], metadata["cover_data"]),
+                            (
+                                song_id,
+                                metadata.get("cover_mime", "image/jpeg"),
+                                metadata["cover_data"],
+                            ),
                         )
 
-                    if metadata["lyrics"]:
+                    if metadata.get("lyrics"):
                         cursor.execute(
                             "INSERT OR IGNORE INTO lyrics (song_id, lyrics) VALUES (?, ?)",
                             (song_id, metadata["lyrics"]),
                         )
 
                     conn.commit()
-
                     count_in_dir += 1
                     total_new_songs += 1
                     print(
-                        f"  - [成功] 已将 '{metadata['search_key']}' 完整存入数据库。"
+                        f"  - [成功] 已将 '{metadata.get('search_key')}' (伴奏: {bool(is_instrumental)}) 完整存入数据库。"
                     )
 
                 except sqlite3.IntegrityError:
