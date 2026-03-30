@@ -36,7 +36,7 @@
 图形化界面，支持通过以下方式调用所有 API 功能：
 - **单曲解析**: 输入歌曲 ID/MID，获取信息与播放链接。
 - **后台批量下载**: 输入歌单/专辑 ID，触发后台批量下载。
-- **关键词搜索**: 跨平台搜索并自动下载最高音质版本。
+- **关键词搜索**: 跨平台搜索。
 
 #### `delete_songs.html` — 本地库管理后台
 - 浏览本地歌曲库，支持实时关键词筛选。
@@ -134,7 +134,7 @@ pip install -r requirements.txt
 
 ### 3. 初始化数据库
 
-首次运行或新增功能后，请执行：
+如果本地已有歌曲，首次运行前请执行：
 
 ```bash
 python scanner.py
@@ -145,8 +145,6 @@ python scanner.py
 ---
 
 ### 4. 启动服务
-
-本项目已升级为 **FastAPI** 架构，请使用 `uvicorn` 启动：
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 5000
@@ -253,7 +251,10 @@ curl -H "X-API-Key: YOUR_SECRET_KEY" \
 ##### 📦 按 ID 下载专辑
 ```bash
 curl -H "X-API-Key: YOUR_SECRET_KEY" \
-  "http://127.0.0.1:5000/api/qq?album_id=003DF0bQ31w25h"
+  "http://127.0.0.1:5000/api/qq?album_id=8218"
+
+curl -H "X-API-Key: YOUR_SECRET_KEY" \
+  "http://127.0.0.1:5000/api/qq?album_mid=003DF0bQ31w25h"
 ```
 
 ---

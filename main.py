@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import logging
 import os
 import pathlib
 import re
@@ -46,6 +47,19 @@ app = FastAPI(
     description="一个集成了Web界面、智能工具和多源音乐API的私有化解决方案。",
     version="2.0.0",
 )
+
+
+# =====================================================================
+# --- 日志过滤配置：防止前端高频轮询刷屏终端 ---
+# =====================================================================
+class EndpointFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # 如果日志内容里包含我们轮询的接口路径，就返回 False (屏蔽该日志)
+        return record.getMessage().find("/api/instrumental/queue_status") == -1
+
+
+# 将过滤器挂载到 Uvicorn 的访问日志记录器上
+logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 
 # 实例化所有API客户端
 local_api = LocalMusicAPI(Config.DATABASE_FILE)
