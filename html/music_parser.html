@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,15 +8,45 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #f0f2f5; }
-        .card { background-color: white; border-radius: 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); }
-        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); transition: all 0.3s ease; }
-        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 6px 20px rgba(118, 75, 162, 0.4); }
-        .loader { border-top-color: #667eea; animation: spin 1s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .tab-btn.active { color: #667eea; border-color: #667eea; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+        }
+
+        .card {
+            background-color: white;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(118, 75, 162, 0.4);
+        }
+
+        .loader {
+            border-top-color: #667eea;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .tab-btn.active {
+            color: #667eea;
+            border-color: #667eea;
+        }
     </style>
 </head>
+
 <body class="flex items-center justify-center min-h-screen p-4">
 
     <div class="card w-full max-w-2xl p-8 space-y-6">
@@ -25,98 +56,129 @@
                 <p class="text-gray-500 mt-2">支持单曲解析、后台批量下载和关键词搜索。</p>
             </div>
             <div class="text-sm text-center sm:text-right">
-                <a href="/playlist_importer.html" class="block text-green-600 hover:text-green-800 font-semibold whitespace-nowrap mb-1">导入歌单到 Navidrome &rarr;</a>
-                <a href="/delete_songs.html" class="block text-indigo-600 hover:text-indigo-800 font-semibold whitespace-nowrap mb-1">管理本地库 &rarr;</a>
-                <a href="/netease_crypto_tool.html" class="block text-red-600 hover:text-red-800 font-semibold whitespace-nowrap">网易云工具 &rarr;</a>
+                <a href="/delete_songs.html"
+                    class="block text-indigo-600 hover:text-indigo-800 font-semibold whitespace-nowrap mb-1">管理本地库
+                    &rarr;</a>
+                <a href="/instrumental_maker.html"
+                    class="block text-purple-600 hover:text-purple-800 font-bold whitespace-nowrap mb-1">🎙️ 伴奏提取工坊
+                    &rarr;</a>
+                <a href="/playlist_importer.html"
+                    class="block text-green-600 hover:text-green-800 font-semibold whitespace-nowrap mb-1">导入歌单到
+                    Navidrome &rarr;</a>
+                <a href="/netease_crypto_tool.html"
+                    class="block text-red-600 hover:text-red-800 font-semibold whitespace-nowrap">网易云工具 &rarr;</a>
             </div>
         </div>
-        
+
         <!-- Tabs -->
         <div class="flex border-b border-gray-200">
-            <button id="tabSong" class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent active">单曲解析</button>
-            <button id="tabBatch" class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent">后台批量下载</button>
-            <button id="tabSearch" class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent">关键词搜索</button>
+            <button id="tabSong"
+                class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent active">单曲解析</button>
+            <button id="tabBatch"
+                class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent">后台批量下载</button>
+            <button id="tabSearch"
+                class="tab-btn flex-1 py-3 text-center font-semibold text-gray-500 border-b-2 border-transparent">关键词搜索</button>
         </div>
 
         <div class="space-y-4">
             <div>
                 <label for="apiKey" class="text-sm font-medium text-gray-700">API 密钥 (X-API-Key)</label>
-                <input type="password" id="apiKey" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="请输入您的 API 密钥">
+                <input type="password" id="apiKey"
+                    class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="请输入您的 API 密钥">
             </div>
 
             <!-- Single Song View -->
             <div id="viewSong" class="space-y-4">
-                 <div>
+                <div>
                     <label for="platformSong" class="text-sm font-medium text-gray-700">选择平台</label>
-                    <select id="platformSong" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <select id="platformSong"
+                        class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
                         <option value="netease">网易云音乐</option>
                         <option value="qq">QQ音乐</option>
                     </select>
                 </div>
                 <div id="neteaseSongInputs">
                     <label for="neteaseSongId" class="text-sm font-medium text-gray-700">歌曲 ID</label>
-                    <input type="text" id="neteaseSongId" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="粘贴网易云歌曲的 ID">
+                    <input type="text" id="neteaseSongId"
+                        class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="粘贴网易云歌曲的 ID">
                 </div>
                 <div id="qqSongInputs" class="hidden space-y-4">
                     <div>
                         <label for="qqSongId" class="text-sm font-medium text-gray-700">歌曲 ID</label>
-                        <input type="text" id="qqSongId" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="粘贴QQ音乐歌曲的数字 ID (songid)">
+                        <input type="text" id="qqSongId"
+                            class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            placeholder="粘贴QQ音乐歌曲的数字 ID (songid)">
                     </div>
                     <div>
                         <label for="qqSongMid" class="text-sm font-medium text-gray-700">歌曲 MID</label>
-                        <input type="text" id="qqSongMid" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="粘贴QQ音乐歌曲的 MID (songmid)">
-                         <p class="text-xs text-gray-500 mt-1">ID 和 MID 只需填写一个即可。</p>
+                        <input type="text" id="qqSongMid"
+                            class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            placeholder="粘贴QQ音乐歌曲的 MID (songmid)">
+                        <p class="text-xs text-gray-500 mt-1">ID 和 MID 只需填写一个即可。</p>
                     </div>
                 </div>
             </div>
 
             <!-- Batch Download View -->
             <div id="viewBatch" class="hidden space-y-4">
-                 <div>
+                <div>
                     <label for="platformBatch" class="text-sm font-medium text-gray-700">选择平台</label>
-                    <select id="platformBatch" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <select id="platformBatch"
+                        class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
                         <option value="netease">网易云音乐</option>
                         <option value="qq">QQ音乐</option>
                     </select>
                 </div>
                 <div>
                     <label for="typeBatch" class="text-sm font-medium text-gray-700">选择类型</label>
-                    <select id="typeBatch" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <select id="typeBatch"
+                        class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
                         <option value="playlist">歌单 (Playlist)</option>
                         <option value="album">专辑 (Album)</option>
                     </select>
                 </div>
                 <div>
                     <label for="idBatch" class="text-sm font-medium text-gray-700">输入ID</label>
-                    <input type="text" id="idBatch" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="粘贴歌单或专辑的ID">
+                    <input type="text" id="idBatch"
+                        class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="粘贴歌单或专辑的ID">
                 </div>
             </div>
-            
+
             <!-- Keyword Search View -->
             <div id="viewSearch" class="hidden space-y-4">
-                 <div>
+                <div>
                     <label for="platformSearch" class="text-sm font-medium text-gray-700">选择平台</label>
-                    <select id="platformSearch" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <select id="platformSearch"
+                        class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
                         <option value="netease">网易云音乐</option>
                         <option value="qq">QQ音乐</option>
                     </select>
                 </div>
                 <div>
                     <label for="keyword" class="text-sm font-medium text-gray-700">关键词</label>
-                    <input type="text" id="keyword" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="格式: 歌手 - 歌曲名">
+                    <input type="text" id="keyword"
+                        class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="格式: 歌手 - 歌曲名">
                 </div>
                 <div>
                     <label for="album" class="text-sm font-medium text-gray-700">专辑 (可选)</label>
-                    <input type="text" id="album" class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="填写专辑名可提高匹配精度">
+                    <input type="text" id="album"
+                        class="mt-1 block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="填写专辑名可提高匹配精度">
                 </div>
             </div>
         </div>
 
-        <button id="submitBtn" class="w-full btn-primary text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:shadow-outline flex items-center justify-center">
+        <button id="submitBtn"
+            class="w-full btn-primary text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:shadow-outline flex items-center justify-center">
             <span id="btnText">解析单曲</span>
-            <div id="loader" class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-6 w-6 ml-3 hidden"></div>
+            <div id="loader"
+                class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-6 w-6 ml-3 hidden"></div>
         </button>
-        
+
         <div id="result" class="mt-6"></div>
     </div>
 
@@ -129,8 +191,8 @@
             loader: document.getElementById('loader'),
             tabs: { song: document.getElementById('tabSong'), batch: document.getElementById('tabBatch'), search: document.getElementById('tabSearch'), },
             views: { song: document.getElementById('viewSong'), batch: document.getElementById('viewBatch'), search: document.getElementById('viewSearch'), },
-            song: { 
-                platform: document.getElementById('platformSong'), 
+            song: {
+                platform: document.getElementById('platformSong'),
                 neteaseInputs: document.getElementById('neteaseSongInputs'),
                 qqInputs: document.getElementById('qqSongInputs'),
                 neteaseId: document.getElementById('neteaseSongId'),
@@ -164,7 +226,7 @@
                 elements.batch.id.placeholder = '粘贴歌单的ID';
             }
         }
-        
+
         function switchTab(tabName) {
             activeTab = tabName;
             Object.keys(elements.views).forEach(key => {
@@ -193,18 +255,18 @@
                 displayResult(`<div class="bg-red-100 border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert"><strong>错误:</strong> 请输入您的 API 密钥。</div>`);
                 return;
             }
-            
+
             showLoading(true);
             displayResult('');
             let apiUrl = '';
 
             if (activeTab === 'song') {
                 const platform = elements.song.platform.value;
-                if(platform === 'netease') {
+                if (platform === 'netease') {
                     const id = elements.song.neteaseId.value.trim();
                     if (!id) {
-                         displayResult(`<div class="bg-red-100 border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert"><strong>错误:</strong> 请输入网易云歌曲ID。</div>`);
-                         showLoading(false); return;
+                        displayResult(`<div class="bg-red-100 border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert"><strong>错误:</strong> 请输入网易云歌曲ID。</div>`);
+                        showLoading(false); return;
                     }
                     apiUrl = `/api/netease?id=${id}`;
                 } else { // qq
@@ -240,7 +302,7 @@
                 const response = await fetch(apiUrl, { headers: { 'X-API-Key': apiKey } });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.message || `服务器返回错误 ${response.status}`);
-                
+
                 if (response.status === 202) {
                     displayResult(`<div class="bg-green-100 border-green-400 text-green-700 px-4 py-3 rounded-lg" role="alert"><strong class="font-bold">任务已接受!</strong><span class="block sm:inline"> ${data.data.message}</span></div>`);
                 } else if (response.status === 200) {
@@ -266,5 +328,5 @@
         }
     </script>
 </body>
-</html>
 
+</html>

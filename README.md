@@ -226,6 +226,7 @@ curl -G -H "X-API-Key: YOUR_SECRET_KEY" \
 | `id` | 网易云 | 歌曲 id |
 | `playlist_id` | 通用 | 歌单 ID，触发后台批量下载 |
 | `album_id` | 通用 | 专辑 ID，触发后台批量下载 |
+| `album_mid` | qq音乐 | 专辑 MID，触发后台批量下载 |
 | `level` | 网易云 | 音质等级（如 `hires`） |
 
 #### 示例请求

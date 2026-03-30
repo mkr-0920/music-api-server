@@ -2,35 +2,56 @@ class Config:
     """
     用于统一管理Cookie和服务器设置。
     """
+
     # -- 服务器设置 --
-    HOST = '0.0.0.0'
+    HOST = "0.0.0.0"
     PORT = 5000
     DEBUG_MODE = True
 
     # 访问密钥
     API_SECRET_KEY = ""
 
+    # MVSEP_API_KEY
+    MVSEP_API_KEY = ""
+
     # --- 下载功能总开关 ---
     # 将此值设置为 False 可以禁用所有的后台下载功能
     DOWNLOADS_ENABLED = False
-    # 如果设置为 False，下载完 master 版本后将跳过 flac 版本。
-    ENABLE_FLAC_DOWNLOAD_WHEN_HAVE_MASTER = False
+
+    # --- 音质下载严格模式配置 ---
+    # 是否下载并保留 Master (最高解析度无损)
+    ENABLE_MASTER_DOWNLOAD = False
+
+    # 是否下载并保留 FLAC (标准无损)
+    ENABLE_FLAC_DOWNLOAD = False
+
+    # 是否允许有损兜底 (如果设为 True，当且仅当库中没有任何 MP3 时，自动拉取 320k，没有 320k 则拉取 128k)
+    ENABLE_LOSSY_DOWNLOAD = False
 
     # -- 网易云音乐 Cookie --
-    NETEASE_COOKIE_STR = 'MUSIC_U=;os=pc;appver=9.9.9;'
-
-    # -- QQ音乐 用户配置 --
-    # 包含了刷新Cookie所需的所有信息
-    QQ_USER_CONFIG = {
-        "uin": "",
-        "qqmusic_key": "",
-        "qm_keyst": "",  # 这个通常与qqmusic_key相同
-        "refresh_token": "" # 刷新cookies
+    # 更新为您提供的值
+    # appver 版本号会影响能够解析的音质
+    NETEASE_USERS = {
+        "01234567": "MUSIC_U=; __csrf=; os=android; appver=9.4.70; versioncode=9004070; deviceId=; sDeviceId=; NMTID=; NMDI=; mobilename=; brand=; osver=16; resolution=2400x1080; channel=netease;",
+        "1234567890": "MUSIC_U=; __csrf=; os=android; appver=9.4.70; versioncode=9004070; deviceId=; sDeviceId=; NMTID=; NMDI=; mobilename=; brand=; osver=16; resolution=2400x1080; channel=netease;",
     }
 
-    # --- 本地音乐API配置 ---
-    MUSIC_DIRECTORY = "/path/to/music"
-    DATABASE_FILE = "music_library.db"
-    # --- 无损品质 ---
-    FLAC_DIRECTORY = "/navidrome/flac"
+    NETEASE_COOKIE_STR = list(NETEASE_USERS.values())[0] if NETEASE_USERS else ""
 
+    # -- QQ音乐 用户配置 --
+    # 包含了核心鉴权和自动刷新 Cookie 所需的所有信息 (请通过网页端或客户端抓包获取)
+    QQ_USER_CONFIG = {
+        "uin": "YOUR_QQ_NUMBER_OR_UIN",             # 用户数字ID，通常是 QQ 号
+        "qqmusic_key": "YOUR_QQMUSIC_KEY",          # 核心密钥票据 (如 Q_H_L_...)
+        "qm_keyst": "YOUR_QM_KEYST",                # 通常与 qqmusic_key 保持一致
+        "refresh_token": "YOUR_REFRESH_TOKEN"       # 用于长效保持登录状态的刷新令牌
+    }
+
+    # 本地音乐库与文件系统配置
+    MASTER_DIRECTORY = "/path/to/master"
+    FLAC_DIRECTORY = "/path/to/flac"
+    LOSSY_DIRECTORY = "/path/to/lossy"       # 用于存放兜底的 320k/128k MP3
+    INSTRUMENTAL_DIRECTORY = "/path/to/instrument"
+    
+    # 存放本地音乐元数据的 SQLite 数据库文件路径 (默认在项目根目录生成)
+    DATABASE_FILE = "music_library.db"
