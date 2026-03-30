@@ -7,7 +7,6 @@ import logging
 import os
 import random
 import re
-import threading
 
 # --- 第三方库导入 ---
 import httpx
@@ -43,10 +42,17 @@ from core.config import Config
 
 
 class QQMusicAPI:
-    def __init__(self, local_api_instance, music_directory: str, flac_directory: str):
+    def __init__(
+        self,
+        local_api_instance,
+        master_directory: str,
+        flac_directory: str,
+        lossy_directory: str,
+    ):
         self.local_api = local_api_instance
-        self.music_directory = music_directory
+        self.master_directory = master_directory
         self.flac_directory = flac_directory
+        self.lossy_directory = lossy_directory
         self.converter = OpenCC("t2s")
         self.base_url = "https://u.y.qq.com/cgi-bin/musicu.fcg"
         self.headers = {
@@ -62,7 +68,15 @@ class QQMusicAPI:
         }
         self.album_cache = {}
         self._setup_logger()
-        self.client = httpx.AsyncClient(timeout=20.0)
+
+    @property
+    def client(self):
+        import httpx
+
+        # 共享同一个主事件循环下的 Client
+        if getattr(self, "_client", None) is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
 
     def _setup_logger(self):
         logger = logging.getLogger("QQMusicDownloader")
@@ -165,15 +179,25 @@ class QQMusicAPI:
             return quality, domain + purl
         return quality, None
 
-    async def _get_album_details_by_mid(self, album_mid: str) -> dict:
-        if not album_mid:
+    async def _get_album_details(self, album_identifier: str) -> dict:
+        if not album_identifier:
             return None
+
+        album_identifier = str(album_identifier).strip()
         url = "https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg"
-        params = {"albummid": album_mid, "format": "json", "outCharset": "utf-8"}
+        params = {"format": "json", "outCharset": "utf-8"}
+
+        if album_identifier.isdigit():
+            params["albumid"] = album_identifier
+        else:
+            params["albummid"] = album_identifier
+
         response = await self._get_request(url, params=params)
         if response and response.get("code", -1) == 0:
             return response.get("data")
-        print(f"错误: 获取专辑 (MID: {album_mid}) 详情失败。服务器响应: {response}")
+        print(
+            f"错误: 获取专辑 (MID/ID: {album_identifier}) 详情失败。服务器响应: {response}"
+        )
         return None
 
     async def _embed_metadata(
@@ -185,7 +209,7 @@ class QQMusicAPI:
 
         # 异步预热专辑详情缓存
         if album_id and album_id not in self.album_cache:
-            self.album_cache[album_id] = await self._get_album_details_by_mid(album_id)
+            self.album_cache[album_id] = await self._get_album_details(album_id)
 
         # 异步下载封面
         if song_info.get("cover_url"):
@@ -349,18 +373,14 @@ class QQMusicAPI:
         filename_suffix = " [M]" if quality == "master" else ""
         safe_filename = re.sub(r'[\\/*?:"<>|]', "", base_name)
 
-        save_directory = self.music_directory
-        if quality == "flac":
-            existing_qualities = await run_in_threadpool(
-                self.local_api.get_existing_qualities,
-                search_key=search_key,
-                album=album_name,
-            )
-            if "master" in existing_qualities:
-                print(
-                    ">>> 检测到已存在 master 版本，将把 flac 版本下载到 'flac' 目录。"
-                )
-                save_directory = self.flac_directory
+        if quality == "master":
+            save_directory = self.master_directory
+        elif quality == "flac":
+            save_directory = self.flac_directory
+        else:
+            save_directory = self.lossy_directory
+
+        os.makedirs(save_directory, exist_ok=True)
 
         file_path = os.path.join(
             save_directory, f"{safe_filename}{filename_suffix}{extension}"
@@ -373,7 +393,11 @@ class QQMusicAPI:
                     f"后台任务: 开始下载 '{base_name}' ({quality}) (第 {attempt + 1} 次尝试)"
                 )
                 async with self.client.stream(
-                    "GET", download_url, timeout=300, headers=self.headers
+                    "GET",
+                    download_url,
+                    timeout=300,
+                    headers=self.headers,
+                    cookies=Config.QQ_USER_CONFIG,
                 ) as r:
                     r.raise_for_status()
                     with open(file_path, "wb") as f:
@@ -386,12 +410,53 @@ class QQMusicAPI:
                 image_data, cover_mime = await self._embed_metadata(
                     file_path, song_info, lyric, tlyric
                 )
+                # print(f"song_info: {song_info}")
 
-                # 将所有信息（包括封面）存入数据库
-                #    我们直接传递 song_info 字典，local_api 会处理它
+                # 从预热好的缓存中取回专辑附加信息，用于补全数据库
+                album_id = song_info.get("album_mid")
+                album_details = self.album_cache.get(album_id, {})
+
+                # 解析发行日期
+                publish_time_str = album_details.get("aDate")
+                release_date_str, release_year_str = None, None
+                if publish_time_str:
+                    try:
+                        dt_object = datetime.datetime.strptime(
+                            publish_time_str, "%Y-%m-%d"
+                        )
+                        release_date_str = dt_object.strftime("%Y-%m-%d")
+                        release_year_str = dt_object.strftime("%Y")
+                    except ValueError:
+                        pass
+
+                # 组装标准数据库字典
+                db_song_info = {
+                    "search_key": search_key,
+                    "title": song_info.get("name", "未知歌曲"),
+                    "is_instrumental": 0,
+                    "duration_ms": song_info.get("duration", 0),
+                    "album": song_info.get("album_name"),
+                    "artist": song_info.get("artist"),
+                    "albumartist": album_details.get(
+                        "singername", song_info.get("artist")
+                    ),
+                    "composer": song_info.get("composer"),
+                    "lyricist": song_info.get("lyricist"),
+                    "arranger": song_info.get("arranger"),
+                    "bpm": song_info.get("bpm"),
+                    "genre": song_info.get("genre") or album_details.get("genre"),
+                    "tracknumber": song_info.get("track_number"),
+                    "discnumber": song_info.get("disc_number"),
+                    "date": release_date_str,
+                    "year": release_year_str,
+                }
+
+                print(f"db_song_info: {db_song_info}")
+
+                # 入库
                 await run_in_threadpool(
                     self.local_api.add_song_to_db,
-                    song_info=song_info,  # 传递完整的 song_info 字典
+                    song_info=db_song_info,  # 传入刚组装好的标准字典
                     file_path=file_path,
                     quality=quality,
                     lyric=lyric,
@@ -415,14 +480,10 @@ class QQMusicAPI:
                     return False
         return False
 
-    def _run_async_in_thread(self, async_func, *args, **kwargs):
-        """同步包装器，在独立线程中运行异步函数。"""
-        asyncio.run(async_func(*args, **kwargs))
-
     async def _background_download_task(
         self, song_info: dict, song_urls: dict, lyric: str, tlyric: str
     ):
-        """异步后台智能分层下载任务。"""
+        """完全解耦的异步后台智能分层下载任务（严格模式 + 真正的兜底）。"""
         album_name = song_info.get("album_name", "")
         artist_string = song_info.get("artist", "未知歌手")
         song_name = song_info.get("name", "未知歌曲")
@@ -435,27 +496,19 @@ class QQMusicAPI:
         )
         print(f"后台任务: 本地库中 '{search_key}' 已有音质: {existing_qualities}")
 
-        if "master" in existing_qualities:
-            print("后台任务: 已存在 master 版本，任务结束。")
-            return
+        tasks = []
+        enable_master = getattr(Config, "ENABLE_MASTER_DOWNLOAD", True)
+        enable_flac = getattr(Config, "ENABLE_FLAC_DOWNLOAD", False)
+        enable_lossy = getattr(Config, "ENABLE_LOSSY_DOWNLOAD", False)
 
-        if "flac" in existing_qualities and "master" in song_urls:
-            print("后台任务: 已存在 flac 版本，尝试补充 master 版本...")
-            await self._download_and_process_single_version(
-                search_key,
-                "master",
-                song_urls["master"],
-                ".flac",
-                song_info,
-                lyric,
-                tlyric,
-            )
-            return
+        # 标记是否已经拥有或本次能下到无损
+        downloaded_or_has_lossless = ("master" in existing_qualities) or (
+            "flac" in existing_qualities
+        )
 
-        if "320" in existing_qualities or "128" in existing_qualities:
-            print("后台任务: 已存在低品质版本，尝试补充 master 和 flac...")
-            tasks = []
-            if "master" in song_urls:
+        # 1. 独立判断 Master
+        if enable_master:
+            if "master" not in existing_qualities and "master" in song_urls:
                 tasks.append(
                     self._download_and_process_single_version(
                         search_key,
@@ -467,7 +520,11 @@ class QQMusicAPI:
                         tlyric,
                     )
                 )
-            if "flac" in song_urls:
+                downloaded_or_has_lossless = True
+
+        # 2. 独立判断 FLAC
+        if enable_flac:
+            if "flac" not in existing_qualities and "flac" in song_urls:
                 tasks.append(
                     self._download_and_process_single_version(
                         search_key,
@@ -479,53 +536,40 @@ class QQMusicAPI:
                         tlyric,
                     )
                 )
-            if tasks:
-                await asyncio.gather(*tasks)
-            return
+                downloaded_or_has_lossless = True
 
-        if not existing_qualities:
-            print("后台任务: 本地库无此歌曲，开始智能下载...")
-            downloaded_master = False
-            if "master" in song_urls:
-                if await self._download_and_process_single_version(
-                    search_key,
-                    "master",
-                    song_urls["master"],
-                    ".flac",
-                    song_info,
-                    lyric,
-                    tlyric,
-                ):
-                    downloaded_master = True
-
-            if "flac" in song_urls and (
-                not downloaded_master or Config.ENABLE_FLAC_DOWNLOAD_WHEN_HAVE_MASTER
-            ):
-                await self._download_and_process_single_version(
-                    search_key,
-                    "flac",
-                    song_urls["flac"],
-                    ".flac",
-                    song_info,
-                    lyric,
-                    tlyric,
-                )
-
-            elif not downloaded_master and "flac" not in song_urls:
-                print("后台任务: 未能下载任何高品质音源，开始降级查找...")
-                for quality in ["320", "128"]:
-                    if song_urls.get(quality):
-                        extension = self.file_config[quality]["e"]
-                        if await self._download_and_process_single_version(
+        # 3. 真正的有损兜底 (仅在本地没有无损，且本次也下不到无损时触发)
+        if enable_lossy and not downloaded_or_has_lossless:
+            if "320" not in existing_qualities and "128" not in existing_qualities:
+                if "320" in song_urls:
+                    tasks.append(
+                        self._download_and_process_single_version(
                             search_key,
-                            quality,
-                            song_urls[quality],
-                            extension,
+                            "320",
+                            song_urls["320"],
+                            self.file_config["320"]["e"],
                             song_info,
                             lyric,
                             tlyric,
-                        ):
-                            return
+                        )
+                    )
+                elif "128" in song_urls:
+                    tasks.append(
+                        self._download_and_process_single_version(
+                            search_key,
+                            "128",
+                            song_urls["128"],
+                            self.file_config["128"]["e"],
+                            song_info,
+                            lyric,
+                            tlyric,
+                        )
+                    )
+
+        if tasks:
+            await asyncio.gather(*tasks)
+        else:
+            print(f"后台任务: '{search_key}' 命中严格模式，没有需要下载的音质版本。")
 
     async def get_song_info(self, song_mid):
         payload = {
@@ -618,10 +662,9 @@ class QQMusicAPI:
             return {"error": "获取详细信息失败。"}
 
         if self.local_api and Config.DOWNLOADS_ENABLED:
-            threading.Thread(
-                target=self._run_async_in_thread,
-                args=(self._background_download_task, info, urls, lyric, tlyric),
-            ).start()
+            asyncio.create_task(
+                self._background_download_task(info, urls, lyric, tlyric)
+            )
 
         return {**info, "urls": urls, "lyric": lyric, "tlyric": tlyric}
 
@@ -740,19 +783,34 @@ class QQMusicAPI:
                 continue
         print(f"歌单 '{playlist_name}' 处理完毕。")
 
-    async def download_album_by_id(self, album_mid: str, level: str):
+    async def download_album(self, album_identifier: str, level: str):
+        if not album_identifier:
+            return
+
+        album_mid = str(album_identifier).strip()
         url = "https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg"
-        params = {"albummid": album_mid, "format": "json", "outCharset": "utf-8"}
+        params = {"format": "json", "outCharset": "utf-8"}
+
+        # 智能参数嗅探
+        if album_mid.isdigit():
+            params["albumid"] = album_mid
+        else:
+            params["albummid"] = album_mid
+
         response = await self._get_request(url, params=params)
+        # print(f"专辑信息：{response}")
         if not response or response.get("code", -1) != 0:
             print("错误: 获取专辑详情失败。")
             return
+
         song_list = response.get("data", {}).get("list", [])
         album_name = response.get("data", {}).get("name", "未知专辑")
         total_songs = len(song_list)
+
         if total_songs == 0:
             print("专辑中没有找到任何歌曲。")
             return
+
         print(f"开始处理专辑 '{album_name}'，共 {total_songs} 首歌曲。")
         for i, song in enumerate(song_list):
             await self.get_song_details(
@@ -761,16 +819,12 @@ class QQMusicAPI:
             await asyncio.sleep(1)
         print(f"专辑 '{album_name}' 处理完毕。")
 
-    def start_background_playlist_download(self, playlist_id: str, level: str):
-        threading.Thread(
-            target=self._run_async_in_thread,
-            args=(self.download_playlist_by_id, playlist_id, level),
-        ).start()
-        print(f"已为歌单 {playlist_id} 启动后台下载线程。")
+    async def start_background_playlist_download(self, playlist_id: str, level: str):
+        """启动后台原生协程来执行异步歌单下载任务。"""
+        asyncio.create_task(self.download_playlist_by_id(playlist_id, level))
+        print(f"已为歌单 {playlist_id} 启动后台下载任务。")
 
-    def start_background_album_download(self, album_mid: str, level: str):
-        threading.Thread(
-            target=self._run_async_in_thread,
-            args=(self.download_album_by_id, album_mid, level),
-        ).start()
-        print(f"已为专辑 {album_mid} 启动后台下载线程。")
+    async def start_background_album_download(self, album_identifier: str, level: str):
+        """启动后台原生协程来执行异步专辑下载任务。支持纯数字 ID 或字符串 MID。"""
+        asyncio.create_task(self.download_album(album_identifier, level))
+        print(f"已为专辑 {album_identifier} 启动后台下载任务。")

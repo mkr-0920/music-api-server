@@ -5,7 +5,6 @@ import datetime
 import json
 import os
 import re
-import threading
 import urllib.parse
 from hashlib import md5
 from random import randrange
@@ -95,15 +94,17 @@ class NeteaseMusicAPI:
         self,
         config_users: dict,
         local_api_instance,
-        music_directory: str,
+        master_directory: str,
         flac_directory: str,
+        lossy_directory: str,
     ):
         """
         初始化函数变动：第一个参数改为接收用户配置字典
         """
         self.local_api = local_api_instance
-        self.music_directory = music_directory
+        self.master_directory = master_directory
         self.flac_directory = flac_directory
+        self.lossy_directory = lossy_directory
         self.converter = OpenCC("t2s")
         self.headers = {"User-Agent": APIConstants.USER_AGENT}
         self.quality_map = {
@@ -116,7 +117,6 @@ class NeteaseMusicAPI:
             "jymaster": "master",
         }
         self.album_cache = {}
-        self.client = httpx.AsyncClient(timeout=20.0)
 
         # 初始化多用户 Cookie 池
         self.cookies_pool = {}
@@ -130,6 +130,15 @@ class NeteaseMusicAPI:
         )
         # 为了兼容旧代码，self.cookies 指向默认
         self.cookies = self.default_cookies
+
+    @property
+    def client(self):
+        import httpx
+
+        # 共享同一个主事件循环下的 Client
+        if getattr(self, "_client", None) is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
 
     def _eapi_encrypt(self, url_path: str, payload: dict) -> dict:
         """加密 EAPI 请求体。"""
@@ -184,19 +193,23 @@ class NeteaseMusicAPI:
         user_id: str = None,
     ):
         """
-        支持 eapi 路径覆盖、OS伪装和**多用户切换**。
+        支持 eapi 路径覆盖、OS伪装和多用户切换。
         """
+        print(f"url: {url}")
         try:
             target_cookies = self.default_cookies.copy()  # 默认
 
             if user_id and str(user_id) in self.cookies_pool:
                 target_cookies = self.cookies_pool[str(user_id)].copy()
-                # print(f"[Debug] 切换用户: 使用 ID {user_id} 的 Cookie")
 
             if os_type:
                 target_cookies["os"] = os_type
 
             if is_eapi:
+                # 👇👇👇 核心暴力修改：有就覆写，没有就追加 👇👇👇
+                data["e_r"] = "false"
+                # 👆👆👆 -------------------------------------- 👆👆👆
+
                 url_path = (
                     eapi_path
                     if eapi_path
@@ -212,14 +225,20 @@ class NeteaseMusicAPI:
             if not response.content:
                 return None
 
-            if is_eapi and response.headers.get("Content-Type") != "application/json":
-                try:
-                    decrypted_text = self._eapi_decrypt(response.content)
-                    return json.loads(decrypted_text)
-                except Exception:
-                    return json.loads(response.text)
-            else:
-                return response.json()
+            content_bytes = response.content
+
+            # 如果以 '{' 或 '[' 开头，100% 是明文 JSON，直接秒解！(O(1) 的判断开销)
+            if content_bytes.lstrip().startswith((b"{", b"[")):
+                return json.loads(content_bytes)
+
+            # 如果走到这里，且是 EAPI，说明遇到了服务端强制加密的硬茬，老老实实解密
+            if is_eapi:
+                decrypted_text = self._eapi_decrypt(content_bytes)
+                return json.loads(decrypted_text)
+
+            # 常规非 EAPI 兜底
+            return response.json()
+
         except (httpx.RequestError, json.JSONDecodeError, ValueError) as e:
             print(f"网易云请求或处理出错: {e}")
             return None
@@ -375,17 +394,23 @@ class NeteaseMusicAPI:
         if not album_id:
             return None
         try:
-            params_for_cache_key = {"id": str(album_id), "e_r": "true"}
+            params_for_cache_key = {"id": str(album_id), "e_r": "false"}
             cache_key = self._generate_cache_key(params_for_cache_key)
-            final_url = f"{APIConstants.ALBUM_V3_DETAIL}?cache_key={urllib.parse.quote(cache_key)}"
+            print(f"cache_key: {cache_key}")
+
             eapi_payload = {
                 "id": str(album_id),
-                "e_r": "true",
+                "e_r": "false",
+                "cache_key": cache_key,
                 "header": json.dumps(APIConstants.DEFAULT_CONFIG),
             }
+
+            final_url = f"{APIConstants.ALBUM_V3_DETAIL}?cache_key={urllib.parse.quote(cache_key)}"
+
             response_json = await self._post_request(
                 final_url, eapi_payload, is_eapi=True
             )
+
             if response_json and response_json.get("code") == 200:
                 print(f">>> 从 eapi 专辑接口 (ID: {album_id}) 获取到详情。")
                 return response_json.get("album")
@@ -607,24 +632,21 @@ class NeteaseMusicAPI:
     ):
         """异步下载，并将同步的DB操作放入线程池。"""
         album_name = song_info.get("al", {}).get("name", "")
-        save_directory = self.music_directory
-
-        if quality == "flac":
-            existing_qualities = await run_in_threadpool(
-                self.local_api.get_existing_qualities,
-                search_key=search_key,
-                album=album_name,
-            )
-            if "master" in existing_qualities:
-                print(
-                    ">>> 检测到已存在 master 版本，将把 flac 版本下载到 'flac' 子目录。"
-                )
-                save_directory = self.flac_directory
 
         safe_album_name = re.sub(r'[\\/*?:"<>|]', "", album_name) if album_name else ""
         base_name = f"{search_key} {safe_album_name}" if safe_album_name else search_key
         filename_suffix = " [M]" if quality == "master" else ""
         safe_filename = re.sub(r'[\\/*?:"<>|]', "", base_name)
+
+        if quality == "master":
+            save_directory = self.master_directory
+        elif quality == "flac":
+            save_directory = self.flac_directory
+        else:
+            save_directory = self.lossy_directory
+
+        os.makedirs(save_directory, exist_ok=True)
+
         file_path = os.path.join(
             save_directory, f"{safe_filename}{filename_suffix}{extension}"
         )
@@ -635,7 +657,13 @@ class NeteaseMusicAPI:
                 print(
                     f"后台任务: 开始下载 '{base_name}' ({quality}) (第 {attempt + 1} 次尝试)"
                 )
-                async with self.client.stream("GET", download_url, timeout=300) as r:
+                async with self.client.stream(
+                    "GET",
+                    download_url,
+                    timeout=300,
+                    headers=self.headers,
+                    cookies=self.cookies,
+                ) as r:
                     r.raise_for_status()
                     with open(file_path, "wb") as f:
                         async for chunk in r.aiter_bytes(chunk_size=8192):
@@ -650,14 +678,16 @@ class NeteaseMusicAPI:
 
                 # 将所有信息（包括封面）存入数据库
                 # 构造一个 search_key，因为 song_info 可能不完整
-                artist_names_simple = ";".join(
+                artist_names_simple = "、".join(
                     [artist["name"] for artist in song_info.get("ar", [])]
                 )
                 full_search_key = f"{artist_names_simple} - {song_info.get('name')}"
 
                 # 将所有元数据打包到一个字典中（模拟 scanner.py 的逻辑）
                 db_song_info = {
-                    "search_key": self.converter.convert(full_search_key),
+                    "search_key": search_key,
+                    "title": song_info.get("name", "未知歌曲"),
+                    "is_instrumental": 0,  # 在线下载的强制标记为原曲(0)
                     "duration_ms": song_info.get("dt"),
                     "album": song_info.get("al", {}).get("name"),
                     "artist": artist_names_simple,
@@ -706,19 +736,14 @@ class NeteaseMusicAPI:
                     return False
         return False
 
-    def _run_async_in_thread(self, async_func, *args, **kwargs):
-        """一个同步的包装器，用于在独立的线程中创建并运行一个新的事件循环。"""
-        asyncio.run(async_func(*args, **kwargs))
-
     async def _background_download_task(
         self, song_id: str, meta_info: dict, lyric: str, tlyric: str
     ):
-        """(后台线程) 智能分层下载，并自动写入数据库。"""
+        """完全解耦的异步后台智能分层下载任务"""
         artist_string = "、".join([artist["name"] for artist in meta_info["ar"]])
         song_name = meta_info["name"]
         search_key = self.converter.convert(f"{artist_string} - {song_name}")
 
-        # 从数据库获取该歌曲所有音质
         album_name = meta_info.get("al", {}).get("name", "") if meta_info else ""
         existing_qualities = await run_in_threadpool(
             self.local_api.get_existing_qualities,
@@ -727,146 +752,99 @@ class NeteaseMusicAPI:
         )
         print(f"后台任务: 本地库中 '{search_key}' 已有音质: {existing_qualities}")
 
-        # 场景一: 如果有master则跳过下载
-        if "master" in existing_qualities:
-            print("后台任务: 已存在 master 版本，任务结束。")
-            return
+        tasks = []
+        enable_master = getattr(Config, "ENABLE_MASTER_DOWNLOAD", True)
+        enable_flac = getattr(Config, "ENABLE_FLAC_DOWNLOAD", False)
+        enable_lossy = getattr(Config, "ENABLE_LOSSY_DOWNLOAD", False)
 
-        # 场景二: 没有master有flac，尝试下载jymaster
-        if "flac" in existing_qualities:
-            print("后台任务: 已存在 flac 版本，尝试补充 jymaster 版本...")
-            url_info_data = await self._get_song_url_data(
-                song_id, "jymaster", meta_info
-            )
-            if url_info_data and url_info_data.get("data"):
-                song_info_url = url_info_data["data"][0]
-                # 严格检查返回的是否是 jymaster
-                if (
-                    song_info_url.get("url")
-                    and song_info_url.get("level") == "jymaster"
-                ):
-                    await self._download_and_process_single_version(
+        # 标记是否已经拥有或即将拥有无损音质
+        has_lossless = ("master" in existing_qualities) or (
+            "flac" in existing_qualities
+        )
+        will_download_lossless = False
+
+        master_task = None
+        flac_task = None
+
+        # 1. 独立判断 Master (网易云标识: jymaster)
+        if enable_master and "master" not in existing_qualities:
+            url_data_m = await self._get_song_url_data(song_id, "jymaster", meta_info)
+            if (
+                url_data_m
+                and url_data_m.get("data")
+                and url_data_m["data"][0].get("level") == "jymaster"
+            ):
+                song_url_info = url_data_m["data"][0]
+                if song_url_info.get("url"):
+                    ext = f".{song_url_info.get('type', 'flac')}"
+                    master_task = self._download_and_process_single_version(
                         search_key,
                         "master",
-                        song_info_url["url"],
-                        ".flac",
+                        song_url_info["url"],
+                        ext,
                         meta_info,
                         lyric,
                         tlyric,
                     )
-            return  # 无论是否成功，任务都结束
+                    will_download_lossless = True
 
-        # 场景三: 有320k或128k，尝试下载jymaster和lossless
-        if "320" in existing_qualities or "128" in existing_qualities:
-            print("后台任务: 已存在低品质版本，尝试补充 jymaster 和 lossless...")
-            for level in ["jymaster", "lossless"]:
-                url_info_data = await self._get_song_url_data(song_id, level, meta_info)
-                if url_info_data and url_info_data.get("data"):
-                    song_info_url = url_info_data["data"][0]
-                    if song_info_url.get("url") and song_info_url.get("level") == level:
-                        db_quality = self.quality_map.get(level)
-                        await self._download_and_process_single_version(
-                            search_key,
-                            db_quality,
-                            song_info_url["url"],
-                            ".flac",
-                            meta_info,
-                            lyric,
-                            tlyric,
-                        )
-            return
-
-        # 场景四: 如果完全没有这首歌
-        if not existing_qualities:
-            print("后台任务: 本地库无此歌曲，开始智能下载...")
-            # 先请求jymaster
-            url_info_data = await self._get_song_url_data(
-                song_id, "jymaster", meta_info
-            )
-            if not url_info_data or not url_info_data.get("data"):
-                print(f"后台任务: 无法为 '{search_key}' 获取任何音质的URL。")
-                return
-
-            song_info_url = url_info_data["data"][0]
-            download_url = song_info_url.get("url")
-            actual_level = song_info_url.get("level")
-
-            if not download_url or not actual_level:
-                return
-
-            db_quality = self.quality_map.get(actual_level)
-            extension = f".{song_info_url.get('type', 'mp3')}"
-
-            # 如果返回的正是jymaster
-            if actual_level == "jymaster":
-                await self._download_and_process_single_version(
-                    search_key,
-                    "master",
-                    download_url,
-                    extension,
-                    meta_info,
-                    lyric,
-                    tlyric,
-                )
-                if Config.ENABLE_FLAC_DOWNLOAD_WHEN_HAVE_MASTER:
-                    # 然后再请求lossless下载
-                    print("后台任务: 已下载 master, 继续请求 lossless...")
-                    lossless_data = await self._get_song_url_data(
-                        song_id, "lossless", meta_info
+        # 2. 独立判断 FLAC (网易云标识: lossless)
+        if enable_flac and "flac" not in existing_qualities:
+            url_data_f = await self._get_song_url_data(song_id, "lossless", meta_info)
+            if (
+                url_data_f
+                and url_data_f.get("data")
+                and url_data_f["data"][0].get("level") == "lossless"
+            ):
+                song_url_info = url_data_f["data"][0]
+                if song_url_info.get("url"):
+                    ext = f".{song_url_info.get('type', 'flac')}"
+                    flac_task = self._download_and_process_single_version(
+                        search_key,
+                        "flac",
+                        song_url_info["url"],
+                        ext,
+                        meta_info,
+                        lyric,
+                        tlyric,
                     )
-                    if lossless_data and lossless_data.get("data"):
-                        lossless_info = lossless_data["data"][0]
-                        if (
-                            lossless_info.get("url")
-                            and lossless_info.get("level") == "lossless"
-                        ):
-                            await self._download_and_process_single_version(
+                    will_download_lossless = True
+
+        if master_task:
+            tasks.append(master_task)
+        if flac_task:
+            tasks.append(flac_task)
+
+        # 3. 真正的有损兜底
+        if enable_lossy and not has_lossless and not will_download_lossless:
+            if "320" not in existing_qualities and "128" not in existing_qualities:
+                url_data_lossy = await self._get_song_url_data(
+                    song_id, "exhigh", meta_info
+                )
+                if url_data_lossy and url_data_lossy.get("data"):
+                    song_url_info = url_data_lossy["data"][0]
+                    actual_level = song_url_info.get("level")
+                    download_url = song_url_info.get("url")
+
+                    if download_url and actual_level in ["exhigh", "standard"]:
+                        db_quality = self.quality_map.get(actual_level, "128")
+                        ext = f".{song_url_info.get('type', 'mp3')}"
+                        tasks.append(
+                            self._download_and_process_single_version(
                                 search_key,
-                                "flac",
-                                lossless_info["url"],
-                                ".flac",
+                                db_quality,
+                                download_url,
+                                ext,
                                 meta_info,
                                 lyric,
                                 tlyric,
                             )
-
-            # 如果返回的是exhigh或standard
-            elif actual_level in ["exhigh", "standard"]:
-                print("只有低品质版本...")
-                await self._download_and_process_single_version(
-                    search_key,
-                    db_quality,
-                    download_url,
-                    extension,
-                    meta_info,
-                    lyric,
-                    tlyric,
-                )
-
-            # 如果返回的不是上面几种情况 (例如返回了lossless)
-            else:
-                # 请求lossless下载
-                print(
-                    f"后台任务: 请求 jymaster 返回了 {actual_level}，现在请求 lossless..."
-                )
-                lossless_data = await self._get_song_url_data(
-                    song_id, "lossless", meta_info
-                )
-                if lossless_data and lossless_data.get("data"):
-                    lossless_info = lossless_data["data"][0]
-                    if (
-                        lossless_info.get("url")
-                        and lossless_info.get("level") == "lossless"
-                    ):
-                        await self._download_and_process_single_version(
-                            search_key,
-                            "flac",
-                            lossless_info["url"],
-                            ".flac",
-                            meta_info,
-                            lyric,
-                            tlyric,
                         )
+
+        if tasks:
+            await asyncio.gather(*tasks)
+        else:
+            print(f"后台任务: '{search_key}' 命中严格模式，没有需要下载的音质版本。")
 
     def search_song(self, keyword: str, album: str = None, limit: int = 10):
         """
@@ -928,17 +906,9 @@ class NeteaseMusicAPI:
         tlyric = lyric_data.get("tlyric", {}).get("lyric", "") if lyric_data else ""
 
         if self.local_api and Config.DOWNLOADS_ENABLED:
-            # 使用同步包装器，在新的后台线程中运行异步下载任务
-            threading.Thread(
-                target=self._run_async_in_thread,
-                args=(
-                    self._background_download_task,
-                    song_id,
-                    meta_info,
-                    lyric,
-                    tlyric,
-                ),
-            ).start()
+            asyncio.create_task(
+                self._background_download_task(song_id, meta_info, lyric, tlyric)
+            )
 
         url_data = await self._get_song_url_data(song_id, level, meta_info)
         if (
@@ -1088,12 +1058,13 @@ class NeteaseMusicAPI:
         # 直接调用最可靠的 eapi 专辑接口来获取包含所有歌曲信息的完整响应
         album_response = {}
         try:
-            params_for_cache_key = {"id": str(album_id), "e_r": "true"}
+            params_for_cache_key = {"id": str(album_id), "e_r": "false"}
             cache_key = self._generate_cache_key(params_for_cache_key)
             final_url = f"{APIConstants.ALBUM_V3_DETAIL}?cache_key={urllib.parse.quote(cache_key)}"
             eapi_payload = {
+                "cache_key": cache_key,
                 "id": str(album_id),
-                "e_r": "true",
+                "e_r": "false",
                 "header": json.dumps(APIConstants.DEFAULT_CONFIG),
             }
             album_response = await self._post_request(
@@ -1128,25 +1099,15 @@ class NeteaseMusicAPI:
             "message": f"专辑 '{album_name}' 已成功加入下载队列，共 {total_songs} 首歌曲。"
         }
 
-    def start_background_playlist_download(self, playlist_id: str, level: str):
-        """启动后台线程来执行异步歌单下载任务。"""
-        thread = threading.Thread(
-            target=self._run_async_in_thread,
-            args=(self.download_playlist_by_id, playlist_id, level),
-        )
-        thread.daemon = True
-        thread.start()
-        print(f"已为歌单 {playlist_id} 启动后台下载线程。")
+    async def start_background_playlist_download(self, playlist_id: str, level: str):
+        """启动后台原生协程来执行异步歌单下载任务。"""
+        asyncio.create_task(self.download_playlist_by_id(playlist_id, level))
+        print(f"已为歌单 {playlist_id} 启动后台下载任务。")
 
-    def start_background_album_download(self, album_id: str, level: str):
-        """启动后台线程来执行异步专辑下载任务。"""
-        thread = threading.Thread(
-            target=self._run_async_in_thread,
-            args=(self.download_album_by_id, album_id, level),
-        )
-        thread.daemon = True
-        thread.start()
-        print(f"已为专辑 {album_id} 启动后台下载线程。")
+    async def start_background_album_download(self, album_id: str, level: str):
+        """启动后台原生协程来执行异步专辑下载任务。"""
+        asyncio.create_task(self.download_album_by_id(album_id, level))
+        print(f"已为专辑 {album_id} 启动后台下载任务。")
 
     async def add_songs_to_playlist(
         self, playlist_id: str, song_ids: List[str], user_id: str = None
