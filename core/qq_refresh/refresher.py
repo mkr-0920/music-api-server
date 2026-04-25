@@ -18,24 +18,46 @@ class QQCookieRefresher:
         """构建请求体"""
         return {
             "comm": {
-                "fPersonality": "0",
+                # 1. 基础设备参数升级版本
+                "ct": "11",
+                "cv": "14080008",
+                "v": "14080008",
+                "chid": "2005000982",
+                "tmeAppID": "qqmusic",
+                "format": "json",
+                "inCharset": "utf-8",
+                "outCharset": "utf-8",
+                # 2. 补全账号校验参数
+                "qq": str(self.user_config["uin"]),
+                "authst": self.user_config["qqmusic_key"],
                 "tmeLoginType": "2"
                 if self.user_config["qqmusic_key"].startswith("Q_H_L")
                 else "1",
-                "qq": str(self.user_config["uin"]),
-                "authst": self.user_config["qqmusic_key"],
-                "ct": "11",
-                "cv": "12080008",
-                "v": "12080008",
-                "tmeAppID": "qqmusic",
+                # 3. 最关键的一步：补充设备指纹对抗风控 (以下可以使用固定值或随机生成)
+                "os_ver": "10",
+                "phonetype": "MI 6",
+                "devicelevel": "29",
+                "rom": "xiaomi/iarim/sagit:10/eomam.200122.001/6543210:user/release-keys",
+                "aid": "ffffffffbff94f7d000000000033c587",
+                "nettype": "wifi",
+                "udid": "ffffffffbff94f7d000000000033c587",
+                "OpenUDID": "ffffffffbff94f7d000000000033c587",
+                "OpenUDID2": "ffffffffbff94f7d000001996c7fddff",
+                "QIMEI36": "0fd8b521df8415e5d25da4ba100012e19915",  # 如果有条件，最好用 qimei.py 动态获取
+                "QIMEI": "",
             },
             "req1": {
                 "module": "music.login.LoginServer",
                 "method": "Login",
                 "param": {
-                    "str_musicid": str(self.user_config["uin"]),
+                    "openid": self.user_config.get("openId", ""),
+                    "access_token": self.user_config.get("accessToken", ""),
+                    "refresh_token": "",
+                    "expired_in": 0,
+                    "musicid": int(self.user_config["uin"]),  # 建议强转为 int
                     "musickey": self.user_config["qqmusic_key"],
-                    "refresh_token": self.user_config.get("refresh_token", ""),
+                    "refresh_key": self.user_config.get("refresh_token", ""),
+                    "loginMode": 2,
                 },
             },
         }

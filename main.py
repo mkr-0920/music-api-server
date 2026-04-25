@@ -704,12 +704,11 @@ async def generate_secure_url(file_path: str, request: Request) -> str:
     为一首本地歌曲生成一个临时的、安全的可流媒体播放链接。
     能够根据请求来源（是否来自CDN）智能切换返回的域名。
     """
-    nginx_secret = "YOUR_NGINX_SECRET"  # 必须与 nginx.conf 中的密钥相同
-    expires = int(time.time()) + 3 * 3600
+    expires = int(time.time()) + 1 * 3600
     uri_path = f"/secure_media{file_path}"
 
     # 生成签名
-    string_to_hash = f"{expires}{uri_path} {nginx_secret}"
+    string_to_hash = f"{expires}{uri_path} {Config.ORIGIN_SECRET_KEY}"
     md5_hash = hashlib.md5(string_to_hash.encode("utf-8")).digest()
     secure_hash = base64.urlsafe_b64encode(md5_hash).decode("utf-8").replace("=", "")
 
@@ -754,13 +753,22 @@ def get_all_songs_from_db():
     """一个同步的辅助函数，用于被线程池调用。"""
     conn = sqlite3.connect(Config.DATABASE_FILE)
     cursor = conn.cursor()
+
     cursor.execute(
-        "SELECT id, search_key, album, quality, file_path FROM songs ORDER BY id DESC"
+        "SELECT id, search_key, album, quality, file_path, is_instrumental FROM songs ORDER BY id ASC"
     )
+
     songs_tuples = cursor.fetchall()
     conn.close()
     return [
-        dict(id=s[0], search_key=s[1], album=s[2], quality=s[3], file_path=s[4])
+        dict(
+            id=s[0],
+            search_key=s[1],
+            album=s[2],
+            quality=s[3],
+            file_path=s[4],
+            is_instrumental=s[5],
+        )
         for s in songs_tuples
     ]
 

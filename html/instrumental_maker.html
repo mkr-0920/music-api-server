@@ -170,6 +170,9 @@
         let allSongs = [];
         let pollingInterval = null;
 
+        // 🚀 新增：全局购物车，用于在搜索重绘时记住用户打过的所有勾
+        let selectedSongIds = new Set();
+
         // ================= 工具函数 =================
         function showMsg(html) {
             elements.messageArea.innerHTML = html;
@@ -192,22 +195,22 @@
 
                 const rawSongs = json.data || [];
 
-                // 1. 揪出所有伴奏的特征 (依据：文件名包含 '(Instrumental)')
                 const extractedSearchKeys = new Set();
                 rawSongs.forEach(song => {
                     if (song.file_path && song.file_path.includes('(Instrumental)')) {
-                        extractedSearchKeys.add(song.search_key); // 记录下哪些 search_key 已经有伴奏了
+                        extractedSearchKeys.add(song.search_key);
                     }
                 });
 
-                // 2. 剔除伴奏本身，只保留原曲，并打上标记
                 allSongs = rawSongs
                     .filter(song => !(song.file_path && song.file_path.includes('(Instrumental)')))
                     .map(song => {
-                        // 如果它的 search_key 在伴奏集合里，说明它已经被提取过了
                         song.alreadyExtracted = extractedSearchKeys.has(song.search_key);
                         return song;
                     });
+
+                // 每次重新加载曲库时，清空购物车
+                selectedSongIds.clear();
 
                 renderTable(allSongs);
 
@@ -228,12 +231,14 @@
 
         // ================= 渲染表格 =================
         function renderTable(songs) {
-            elements.songList.innerHTML = songs.map(song => {
+            // 性能优化：限制渲染条数，防止几千首歌卡死浏览器
+            const displaySongs = songs.slice(0, 100);
+
+            elements.songList.innerHTML = displaySongs.map(song => {
                 const qualityBadge = song.quality === 'master' ? '<span class="bg-yellow-50 text-yellow-700 text-xs px-2 py-1 rounded border border-yellow-200 font-medium">Master</span>'
                     : song.quality === 'flac' ? '<span class="bg-blue-50 text-blue-700 text-xs px-2 py-1 rounded border border-blue-200 font-medium">FLAC</span>'
                         : '<span class="bg-gray-50 text-gray-600 text-xs px-2 py-1 rounded border border-gray-200 font-medium">Lossy</span>';
 
-                // 判断状态：如果已经提取过，则锁定 UI
                 const isDone = song.alreadyExtracted;
                 const statusHtml = isDone
                     ? `<span class="inline-flex items-center gap-1 text-green-600 font-bold"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> 已提取</span>`
@@ -241,10 +246,13 @@
                 const disabledAttr = isDone ? 'disabled' : '';
                 const rowClass = isDone ? 'bg-gray-50 opacity-70' : 'hover:bg-indigo-50/30 transition-colors';
 
+                // 🚀 核心修复：绘制前检查这个 ID 是否在购物车里
+                const checkedAttr = selectedSongIds.has(song.id) ? 'checked' : '';
+
                 return `
                 <tr class="${rowClass}" data-song-id="${song.id}">
                     <td class="px-5 py-4">
-                        <input type="checkbox" class="song-checkbox w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" data-id="${song.id}" ${disabledAttr}>
+                        <input type="checkbox" class="song-checkbox w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" data-id="${song.id}" ${disabledAttr} ${checkedAttr}>
                     </td>
                     <td class="px-5 py-4">
                         <div class="text-sm font-bold text-gray-900 truncate max-w-xs md:max-w-md">${song.search_key}</div>
@@ -257,11 +265,12 @@
                 </tr>
             `}).join('');
 
-            updateSubmitButton();
+            if (songs.length > 100) {
+                elements.songList.innerHTML += `<tr><td colspan="4" class="px-5 py-4 text-center text-sm text-gray-500 bg-gray-50">仅显示前 100 首（总计 ${songs.length} 首）。请使用上方搜索框查找特定歌曲。</td></tr>`;
+            }
 
-            document.querySelectorAll('.song-checkbox').forEach(cb => {
-                cb.addEventListener('change', updateSubmitButton);
-            });
+            updateSubmitButton();
+            // 注意：不要在这里 forEach 绑事件了，改用下面的事件委托
         }
 
         // ================= 交互与过滤 =================
@@ -272,31 +281,56 @@
                 (s.album && s.album.toLowerCase().includes(q))
             );
             renderTable(filtered);
-            // 过滤后恢复勾选框状态和轮询UI覆盖
             forceStatusUIUpdate();
         }
 
         function updateSubmitButton() {
-            const checkedCount = document.querySelectorAll('.song-checkbox:checked:not(:disabled)').length;
+            // 按钮上显示的数字，直接取购物车里存的数量
+            const checkedCount = selectedSongIds.size;
             elements.submitBatchBtn.disabled = checkedCount === 0;
             elements.submitBatchBtn.innerHTML = `🚀 批量提取选中项 (${checkedCount})`;
         }
 
+        // 处理全选操作
         elements.selectAll.addEventListener('change', (e) => {
             const isChecked = e.target.checked;
-            document.querySelectorAll('.song-checkbox:not(:disabled)').forEach(cb => cb.checked = isChecked);
+            // 只影响当前搜索结果里展示出来的 checkbox
+            document.querySelectorAll('.song-checkbox:not(:disabled)').forEach(cb => {
+                cb.checked = isChecked;
+                const id = parseInt(cb.dataset.id);
+                if (isChecked) {
+                    selectedSongIds.add(id);
+                } else {
+                    selectedSongIds.delete(id);
+                }
+            });
             updateSubmitButton();
+        });
+
+        // 🚀 新增：事件委托，处理单个勾选框的点击（自动更新购物车）
+        elements.songList.addEventListener('change', function (e) {
+            if (e.target && e.target.classList.contains('song-checkbox')) {
+                const id = parseInt(e.target.dataset.id);
+                if (e.target.checked) {
+                    selectedSongIds.add(id);
+                } else {
+                    selectedSongIds.delete(id);
+                }
+                updateSubmitButton();
+
+                // 如果取消勾选，记得把顶部的全选按钮也取消掉
+                if (!e.target.checked) elements.selectAll.checked = false;
+            }
         });
 
         // ================= 提交队列 =================
         async function submitBatch() {
             const apiKey = elements.apiKey.value.trim();
-            const selectedCbs = document.querySelectorAll('.song-checkbox:checked:not(:disabled)');
-            const ids = Array.from(selectedCbs).map(cb => parseInt(cb.dataset.id));
+            // 🚀 核心修复：提交时不再从 DOM 里抓取，而是直接把整个购物车扔给后端！
+            const ids = Array.from(selectedSongIds);
 
             if (ids.length === 0) return;
 
-            // 锁定按钮和UI
             elements.submitBatchBtn.disabled = true;
             elements.submitBatchBtn.innerHTML = `<div class="loader-small ease-linear rounded-full border-2 border-t-2 border-white h-4 w-4 mr-2"></div> 提交中...`;
 
@@ -312,11 +346,11 @@
 
                 showMsg(`<div class="bg-green-50 text-green-700 px-4 py-3 rounded-lg border border-green-200 mb-4">✅ ${json.message}</div>`);
 
-                // 取消所有勾选
+                // 提交成功后，清空购物车并取消勾选
+                selectedSongIds.clear();
                 elements.selectAll.checked = false;
-                selectedCbs.forEach(cb => cb.checked = false);
+                document.querySelectorAll('.song-checkbox').forEach(cb => cb.checked = false);
 
-                // 确保轮询开启
                 startPollingStatus(apiKey);
 
             } catch (error) {
@@ -331,7 +365,6 @@
 
         function startPollingStatus(apiKey) {
             if (pollingInterval) clearInterval(pollingInterval);
-            // 立即请求一次，然后每 3 秒刷新
             fetchQueueStatus(apiKey);
             pollingInterval = setInterval(() => fetchQueueStatus(apiKey), 3000);
         }
@@ -349,7 +382,6 @@
         }
 
         function forceStatusUIUpdate() {
-            // 遍历后端返回的字典，更新对应行的 UI
             for (const [songIdStr, taskInfo] of Object.entries(latestStatusData)) {
                 const songId = parseInt(songIdStr);
                 const statusCell = document.getElementById(`status-${songId}`);
@@ -359,7 +391,6 @@
 
                 const { status, message } = taskInfo;
 
-                // 根据状态生成美观的 UI
                 let badgeHtml = '';
                 if (status === 'waiting') {
                     badgeHtml = `<span class="inline-flex items-center gap-1.5 text-yellow-600 bg-yellow-50 px-2.5 py-1 rounded-md border border-yellow-200"><span class="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"></span> ${message}</span>`;
@@ -375,14 +406,13 @@
 
                 statusCell.innerHTML = badgeHtml;
 
-                // 锁住正在处理或已完成的复选框，防止重复提交
                 if (checkbox) {
                     if (['waiting', 'processing', 'downloading', 'done'].includes(status)) {
                         checkbox.disabled = true;
                         checkbox.classList.add('opacity-40', 'cursor-not-allowed');
-                        checkbox.checked = false; // 强行解除勾选
+                        checkbox.checked = false;
+                        selectedSongIds.delete(songId); // 处理中自动移出购物车
                     } else {
-                        // failed 允许重新勾选重试
                         checkbox.disabled = false;
                         checkbox.classList.remove('opacity-40', 'cursor-not-allowed');
                     }
@@ -395,7 +425,6 @@
         elements.loadBtn.addEventListener('click', loadSongs);
         elements.searchInput.addEventListener('input', filterSongs);
         elements.submitBatchBtn.addEventListener('click', submitBatch);
-
     </script>
 </body>
 
