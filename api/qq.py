@@ -1,5 +1,6 @@
 # --- 标准库导入 ---
 import asyncio
+from fastapi.concurrency import run_in_threadpool
 import base64
 import datetime
 import json
@@ -10,7 +11,6 @@ import re
 
 # --- 第三方库导入 ---
 import httpx
-from fastapi.concurrency import run_in_threadpool
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import (
     APIC,
@@ -44,12 +44,12 @@ from core.config import Config
 class QQMusicAPI:
     def __init__(
         self,
-        local_api_instance,
+        db_manager_instance,
         master_directory: str,
         flac_directory: str,
         lossy_directory: str,
     ):
-        self.local_api = local_api_instance
+        self.db_manager = db_manager_instance
         self.master_directory = master_directory
         self.flac_directory = flac_directory
         self.lossy_directory = lossy_directory
@@ -454,16 +454,15 @@ class QQMusicAPI:
                 print(f"db_song_info: {db_song_info}")
 
                 # 入库
-                await run_in_threadpool(
-                    self.local_api.add_song_to_db,
-                    song_info=db_song_info,  # 传入刚组装好的标准字典
+                await self.db_manager.add_song_to_db(
+song_info=db_song_info,  # 传入刚组装好的标准字典
                     file_path=file_path,
                     quality=quality,
                     lyric=lyric,
                     tlyric=tlyric,
                     cover_data=image_data,
                     cover_mime=cover_mime,
-                )
+)
                 return True
             except httpx.RequestError as e:
                 print(
@@ -489,11 +488,10 @@ class QQMusicAPI:
         song_name = song_info.get("name", "未知歌曲")
         search_key = self.converter.convert(f"{artist_string} - {song_name}")
 
-        existing_qualities = await run_in_threadpool(
-            self.local_api.get_existing_qualities,
-            search_key=search_key,
+        existing_qualities = await self.db_manager.get_existing_qualities(
+search_key=search_key,
             album=album_name,
-        )
+)
         print(f"后台任务: 本地库中 '{search_key}' 已有音质: {existing_qualities}")
 
         tasks = []
@@ -661,7 +659,7 @@ class QQMusicAPI:
         if not info:
             return {"error": "获取详细信息失败。"}
 
-        if self.local_api and Config.DOWNLOADS_ENABLED:
+        if self.db_manager and Config.DOWNLOADS_ENABLED:
             asyncio.create_task(
                 self._background_download_task(info, urls, lyric, tlyric)
             )

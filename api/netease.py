@@ -1,5 +1,6 @@
 # --- 标准库导入 ---
 import asyncio
+from fastapi.concurrency import run_in_threadpool
 import base64
 import datetime
 import json
@@ -16,7 +17,6 @@ import httpx
 # cryptography (处理网易云加密)
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from fastapi.concurrency import run_in_threadpool
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import (
     APIC,
@@ -93,7 +93,7 @@ class NeteaseMusicAPI:
     def __init__(
         self,
         config_users: dict,
-        local_api_instance,
+        db_manager_instance,
         master_directory: str,
         flac_directory: str,
         lossy_directory: str,
@@ -101,7 +101,7 @@ class NeteaseMusicAPI:
         """
         初始化函数变动：第一个参数改为接收用户配置字典
         """
-        self.local_api = local_api_instance
+        self.db_manager = db_manager_instance
         self.master_directory = master_directory
         self.flac_directory = flac_directory
         self.lossy_directory = lossy_directory
@@ -713,16 +713,15 @@ class NeteaseMusicAPI:
                     ),  # 依赖 _embed_metadata 中填充的
                 }
 
-                await run_in_threadpool(
-                    self.local_api.add_song_to_db,
-                    song_info=db_song_info,
+                await self.db_manager.add_song_to_db(
+song_info=db_song_info,
                     file_path=file_path,
                     quality=quality,
                     lyric=lyric,
                     tlyric=tlyric,
                     cover_data=image_data,
                     cover_mime=cover_mime,
-                )
+)
                 return True
             except httpx.RequestError as e:
                 print(
@@ -745,11 +744,10 @@ class NeteaseMusicAPI:
         search_key = self.converter.convert(f"{artist_string} - {song_name}")
 
         album_name = meta_info.get("al", {}).get("name", "") if meta_info else ""
-        existing_qualities = await run_in_threadpool(
-            self.local_api.get_existing_qualities,
-            search_key=search_key,
+        existing_qualities = await self.db_manager.get_existing_qualities(
+search_key=search_key,
             album=album_name,
-        )
+)
         print(f"后台任务: 本地库中 '{search_key}' 已有音质: {existing_qualities}")
 
         tasks = []
@@ -905,7 +903,7 @@ class NeteaseMusicAPI:
         lyric = lyric_data.get("lrc", {}).get("lyric", "") if lyric_data else ""
         tlyric = lyric_data.get("tlyric", {}).get("lyric", "") if lyric_data else ""
 
-        if self.local_api and Config.DOWNLOADS_ENABLED:
+        if self.db_manager and Config.DOWNLOADS_ENABLED:
             asyncio.create_task(
                 self._background_download_task(song_id, meta_info, lyric, tlyric)
             )

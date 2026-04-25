@@ -182,6 +182,7 @@
         <div id="result" class="mt-6"></div>
     </div>
 
+    <script src="/js/utils.js"></script>
     <script>
         const elements = {
             apiKey: document.getElementById('apiKey'),
@@ -204,6 +205,10 @@
         };
 
         let activeTab = 'song';
+
+        // 核心优化：从 localStorage 恢复 API Key
+        const savedApiKey = localStorage.getItem('api_key');
+        if (savedApiKey) elements.apiKey.value = savedApiKey;
 
         Object.keys(elements.tabs).forEach(key => elements.tabs[key].addEventListener('click', () => switchTab(key)));
         elements.submitBtn.addEventListener('click', handleSubmit);
@@ -255,6 +260,9 @@
                 displayResult(`<div class="bg-red-100 border-red-400 text-red-700 px-4 py-3 rounded-lg" role="alert"><strong>错误:</strong> 请输入您的 API 密钥。</div>`);
                 return;
             }
+            
+            // 核心优化：保存 API Key
+            localStorage.setItem('api_key', apiKey);
 
             showLoading(true);
             displayResult('');
@@ -328,5 +336,4 @@
         }
     </script>
 </body>
-
 </html>

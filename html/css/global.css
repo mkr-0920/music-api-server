@@ -1,0 +1,41 @@
+/* 100% 还原用户原始审美定义 */
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #f0f2f5;
+}
+
+.card {
+    background-color: white;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+    transform: scale(1.05);
+    box-shadow: 0 6px 20px rgba(118, 75, 162, 0.4);
+}
+
+.loader {
+    border-top-color: #667eea;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.tab-btn.active {
+    color: #667eea;
+    border-color: #667eea;
+}
+
+/* 兼容原有列表样式 */
+.table-container {
+    overflow-x: auto;
+    border-radius: 8px;
+}

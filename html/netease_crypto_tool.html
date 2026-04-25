@@ -132,7 +132,7 @@
             try {
                 const urlPath = elements.encrypt.path.value.trim();
                 const payloadJson = elements.encrypt.payload.value.trim();
-                if (!urlPath || !payloadJson) throw new Error('API 路径和 JSON 请求体不能为空。');
+                if (!urlPath || !payloadJson) throw new Error('API 路径 and JSON 请求体不能为空。');
                 JSON.parse(payloadJson);
                 const digest = CryptoJS.MD5(`nobody${urlPath}use${payloadJson}md5forencrypt`).toString();
                 const textToEncrypt = `${urlPath}-36cd479b6b5-${payloadJson}-36cd479b6b5-${digest}`;
@@ -191,4 +191,3 @@
     </script>
 </body>
 </html>
-
