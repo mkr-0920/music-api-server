@@ -4,77 +4,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>伴奏提取工坊</title>
+    <title>伴奏批量提取 - MVSep AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/global.css">
     <style>
-        .loader-small {
-            border: 2px solid #f3f3f3;
-            border-top: 2px solid #667eea;
-            border-radius: 50%;
-            width: 14px;
-            height: 14px;
-            animation: spin 1s linear infinite;
+        body { font-family: 'Inter', sans-serif; background-color: #f0f2f5; }
+        .card { background-color: white; border-radius: 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); transition: all 0.3s ease; }
+        .btn-primary:hover:not(:disabled) { transform: scale(1.02); box-shadow: 0 6px 20px rgba(118, 75, 162, 0.4); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .loader-small { border-top-color: #3b82f6; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* 虚拟滚动样式 */
+        #virtual-viewport {
+            height: 600px;
+            overflow-y: auto;
+            position: relative;
+            background: white;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
         }
+        #virtual-stretcher { position: absolute; top: 0; left: 0; width: 100%; pointer-events: none; }
+        #virtual-content { position: absolute; top: 0; left: 0; width: 100%; will-change: transform; }
+        .v-row {
+            height: 72px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #f3f4f6;
+            padding: 0 20px;
+        }
+        .v-row.is-done { background-color: #f9fafb; opacity: 0.7; }
+        .v-row:hover:not(.is-done) { background-color: #f5f7ff; }
     </style>
 </head>
 
-<body class="bg-gray-50 min-h-screen p-4 md:p-8 font-['Inter']">
+<body class="p-4 md:p-8 flex flex-col items-center min-h-screen">
 
-    <div class="max-w-6xl mx-auto space-y-6">
-        <div class="flex justify-between items-center">
+    <div class="card w-full max-w-6xl p-6 md:p-8 space-y-6 flex-1 flex flex-col">
+
+        <div class="flex justify-between items-start flex-wrap gap-4 border-b border-gray-100 pb-4">
             <div>
-                <h1 class="text-3xl font-bold text-gray-800">🎙️ 伴奏提取工坊</h1>
-                <p class="text-gray-500 mt-1">基于 MVSep AI 算力，将本地曲库克隆为高质量伴奏。</p>
+                <h1 class="text-3xl font-bold text-gray-800 flex items-center gap-2">
+                    🎙️ 伴奏批量提取工坊
+                    <span class="text-xs bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full border border-indigo-200">Virtual Scroll 2.0</span>
+                </h1>
+                <p class="text-gray-500 mt-2">基于虚拟滚动技术，秒级处理万级曲库。</p>
             </div>
-            <a href="/music_parser.html" class="text-indigo-600 hover:text-indigo-800 font-semibold">&larr; 返回解析器</a>
+            <a href="/music_parser.html" class="text-indigo-600 hover:text-indigo-800 font-semibold transition-colors">&larr; 返回主页</a>
         </div>
 
-        <div class="card p-6">
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                <div class="md:col-span-3">
-                    <label for="apiKey" class="text-sm font-medium text-gray-700 mb-1 block">API 密钥 (X-API-Key)</label>
-                    <input type="password" id="apiKey"
-                        class="block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        placeholder="请输入您的 API 密钥">
-                </div>
-                <button id="loadBtn" class="btn-primary text-white font-bold py-3 px-6 rounded-lg flex items-center justify-center">
-                    <span id="loadBtnText">连接曲库</span>
-                    <div id="loadLoader" class="loader ease-linear rounded-full border-2 border-t-2 border-white h-5 w-5 ml-3 hidden"></div>
+        <!-- 密钥与加载 -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+            <div class="md:col-span-3">
+                <label for="apiKey" class="text-sm font-medium text-gray-700 mb-1 block">API 密钥</label>
+                <input type="password" id="apiKey" class="block w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="请输入您的 API 密钥">
+            </div>
+            <button id="loadBtn" class="w-full bg-white border-2 border-indigo-600 text-indigo-600 hover:bg-indigo-50 font-bold py-3 rounded-lg flex items-center justify-center transition-all">
+                <span id="loadBtnText">加载本地曲库</span>
+                <div id="loadLoader" class="loader-small ease-linear rounded-full border-4 border-t-4 border-indigo-600 h-5 w-5 ml-2 hidden"></div>
+            </button>
+        </div>
+
+        <!-- 操作面板 (按钮回到了顶部) -->
+        <div id="actionPanel" class="hidden flex flex-col md:flex-row items-center justify-between gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
+            <div class="w-full md:w-1/2 relative">
+                <input type="text" id="searchInput" class="block w-full pl-4 pr-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="搜索歌手或歌名进行过滤...">
+            </div>
+            <div class="flex items-center gap-4">
+                <span id="statsText" class="text-sm text-gray-500 font-medium"></span>
+                <button id="submitBatchBtn" class="btn-primary text-white font-bold py-2.5 px-6 rounded-lg flex items-center justify-center" disabled>
+                    🚀 批量提取 (0)
                 </button>
             </div>
         </div>
 
-        <div id="actionPanel" class="hidden card p-4 flex flex-col md:flex-row items-center gap-4">
-            <div class="relative flex-1 w-full">
-                <input type="text" id="searchInput" class="block w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="搜索歌曲...">
-            </div>
-            <button id="submitBatchBtn" disabled class="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white font-bold py-2 px-8 rounded-md transition-colors">
-                加入提取队列 (0)
-            </button>
-        </div>
-
         <div id="messageArea"></div>
 
-        <div id="tableContainer" class="hidden table-container bg-white shadow-sm">
-            <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
-                    <tr>
-                        <th class="px-6 py-4 text-left"><input type="checkbox" id="selectAll"></th>
-                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">音质</th>
-                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Search Key</th>
-                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">专辑</th>
-                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
-                    </tr>
-                </thead>
-                <tbody id="songList" class="bg-white divide-y divide-gray-200"></tbody>
-            </table>
+        <!-- 虚拟滚动列表 -->
+        <div id="virtual-viewport" class="hidden shadow-inner relative">
+            <div id="virtual-stretcher"></div>
+            <div id="virtual-content">
+                <div class="bg-gray-100 border-b border-gray-200 flex items-center font-bold text-xs text-gray-600 uppercase sticky top-0 z-20 h-[48px] px-5">
+                    <div class="w-12"><input type="checkbox" id="selectAll" class="w-4 h-4 cursor-pointer"></div>
+                    <div class="flex-1">歌曲信息</div>
+                    <div class="w-24">音质</div>
+                    <div class="w-1/3">当前状态</div>
+                </div>
+                <div id="songList"></div>
+            </div>
         </div>
+
     </div>
 
     <script src="/js/utils.js"></script>
     <script>
+        const ROW_HEIGHT = 72;
+        const HEADER_HEIGHT = 48;
+        const BUFFER = 10;
+
         const elements = {
             apiKey: document.getElementById('apiKey'),
             loadBtn: document.getElementById('loadBtn'),
@@ -84,67 +113,108 @@
             searchInput: document.getElementById('searchInput'),
             submitBatchBtn: document.getElementById('submitBatchBtn'),
             messageArea: document.getElementById('messageArea'),
-            tableContainer: document.getElementById('tableContainer'),
+            viewport: document.getElementById('virtual-viewport'),
+            stretcher: document.getElementById('virtual-stretcher'),
+            content: document.getElementById('virtual-content'),
             selectAll: document.getElementById('selectAll'),
-            songList: document.getElementById('songList')
+            songList: document.getElementById('songList'),
+            statsText: document.getElementById('statsText')
         };
 
         let allSongs = [];
-        let pollingInterval = null;
+        let filteredSongs = [];
         let selectedSongIds = new Set();
         let latestStatusData = {};
+        let pollingInterval = null;
 
         elements.apiKey.value = Utils.getApiKey();
 
-        function showMsg(html) { Utils.displayResult(elements.messageArea, html); }
-
         async function loadSongs() {
             const apiKey = elements.apiKey.value.trim();
-            if (!apiKey) return showMsg(Utils.errorAlert('请输入 API 密钥！'));
+            if (!apiKey) return Utils.displayResult(elements.messageArea, Utils.errorAlert('请输入 API 密钥！'));
             Utils.saveApiKey(apiKey);
+
             elements.loadLoader.classList.remove('hidden');
             elements.loadBtn.disabled = true;
             elements.loadBtnText.textContent = '读取中...';
-            showMsg('');
+            Utils.displayResult(elements.messageArea, '');
+
             try {
                 const res = await fetch('/api/local/list', { headers: { 'X-API-Key': apiKey } });
                 const json = await res.json();
-                allSongs = (json.data || []).sort((a, b) => a.id - b.id);
-                renderTable(allSongs);
+                if (!res.ok) throw new Error(json.message || '无法连接到服务器');
+
+                const rawSongs = json.data || [];
+                const extractedSearchKeys = new Set();
+                rawSongs.forEach(song => { if (song.file_path && song.file_path.includes('(Instrumental)')) extractedSearchKeys.add(song.search_key); });
+
+                allSongs = rawSongs
+                    .filter(song => !(song.file_path && song.file_path.includes('(Instrumental)')))
+                    .map(song => { song.alreadyExtracted = extractedSearchKeys.has(song.search_key); return song; });
+
+                filteredSongs = [...allSongs];
+                setupVirtualScroll();
+
                 elements.actionPanel.classList.remove('hidden');
-                elements.tableContainer.classList.remove('hidden');
+                elements.viewport.classList.remove('hidden');
                 startPollingStatus(apiKey);
-            } catch (error) { showMsg(Utils.errorAlert(error.message)); }
-            finally { elements.loadLoader.classList.add('hidden'); elements.loadBtn.disabled = false; elements.loadBtnText.textContent = '刷新列表'; }
+
+            } catch (error) { Utils.displayResult(elements.messageArea, Utils.errorAlert(error.message)); }
+            finally { elements.loadLoader.classList.add('hidden'); elements.loadBtn.disabled = false; elements.loadBtnText.textContent = '刷新曲库'; }
         }
 
-        function renderTable(songs) {
-            elements.songList.innerHTML = songs.map(song => {
-                const isInstrumental = song.is_instrumental === 1 || (song.search_key && song.search_key.includes('伴奏'));
+        function setupVirtualScroll() {
+            elements.stretcher.style.height = `${filteredSongs.length * ROW_HEIGHT + HEADER_HEIGHT}px`;
+            elements.statsText.textContent = `共 ${filteredSongs.length} 首原曲`;
+            renderVisiblePart();
+        }
+
+        function renderVisiblePart() {
+            const scrollTop = elements.viewport.scrollTop;
+            const vHeight = elements.viewport.clientHeight;
+            let start = Math.max(0, Math.floor((scrollTop - HEADER_HEIGHT) / ROW_HEIGHT) - BUFFER);
+            let end = Math.min(filteredSongs.length, Math.ceil((scrollTop + vHeight) / ROW_HEIGHT) + BUFFER);
+
+            const visibleItems = filteredSongs.slice(start, end);
+            const offsetY = start * ROW_HEIGHT + HEADER_HEIGHT;
+
+            elements.songList.style.transform = `translateY(${offsetY}px)`;
+            elements.songList.innerHTML = visibleItems.map(song => {
+                const isDone = song.alreadyExtracted;
                 const isSelected = selectedSongIds.has(song.id);
+                const task = latestStatusData[song.id];
                 
-                // 如果是已经提取过的，显示状态标签并禁用复选框
-                const statusBadge = isInstrumental 
-                    ? '<span class="text-green-600 font-bold flex items-center gap-1">✅ 已有伴奏</span>'
-                    : `<span class="text-gray-300 text-xs italic" id="status-${song.id}">等待分析...</span>`;
-                
-                const checkboxAttr = isInstrumental ? 'disabled class="song-checkbox opacity-20 cursor-not-allowed"' : `class="song-checkbox" data-id="${song.id}" ${isSelected ? 'checked' : ''}`;
+                let statusHtml = isDone ? '<span class="text-green-600 font-bold flex items-center gap-1">✓ 已提取</span>' : '<span class="text-gray-400">未提取</span>';
+                if (task) {
+                    if (task.status === 'waiting') statusHtml = `<span class="text-yellow-600 font-bold">${task.message}</span>`;
+                    else if (task.status === 'processing') statusHtml = `<span class="text-blue-600 font-bold flex items-center gap-1"><div class="loader-small h-4 w-4 border-2"></div>处理中</span>`;
+                    else if (task.status === 'done') statusHtml = `<span class="text-green-600 font-bold">✓ 成功</span>`;
+                    else if (task.status === 'failed') statusHtml = `<span class="text-red-600 font-bold">❌ 失败</span>`;
+                }
 
-                return `<tr class="${isInstrumental ? 'bg-gray-50' : ''}">
-                    <td class="px-6 py-4"><input type="checkbox" ${checkboxAttr}></td>
-                    <td class="px-6 py-4 text-xs text-gray-400 font-mono">${song.quality}</td>
-                    <td class="px-6 py-4 text-sm font-medium ${isInstrumental ? 'text-gray-400' : 'text-gray-900'}">${song.search_key}</td>
-                    <td class="px-6 py-4 text-sm text-gray-500 truncate max-w-[120px]">${song.album || '-'}</td>
-                    <td class="px-6 py-4">${statusBadge}</td>
-                </tr>`;
+                const isDisabled = isDone || (task && ['waiting', 'processing', 'downloading', 'done'].includes(task.status));
+
+                return `
+                <div class="v-row text-sm ${isDone ? 'is-done' : ''}">
+                    <div class="w-12"><input type="checkbox" class="song-checkbox w-4 h-4 text-indigo-600 rounded" data-id="${song.id}" ${isSelected ? 'checked' : ''} ${isDisabled ? 'disabled opacity-30' : ''}></div>
+                    <div class="flex-1 truncate pr-4">
+                        <div class="font-bold text-gray-900 truncate">${song.search_key}</div>
+                        <div class="text-xs text-gray-500 truncate">${song.album || '未知专辑'}</div>
+                    </div>
+                    <div class="w-24 font-mono text-xs text-gray-400 uppercase">${song.quality}</div>
+                    <div class="w-1/3" id="status-${song.id}">${statusHtml}</div>
+                </div>`;
             }).join('');
-            forceStatusUIUpdate();
         }
 
-        function filterSongs(e) {
-            const term = e.target.value.toLowerCase();
-            renderTable(allSongs.filter(s => s.search_key.toLowerCase().includes(term)));
-        }
+        elements.viewport.addEventListener('scroll', renderVisiblePart);
+
+        elements.searchInput.addEventListener('input', e => {
+            const q = e.target.value.toLowerCase();
+            filteredSongs = allSongs.filter(s => s.search_key.toLowerCase().includes(q) || (s.album && s.album.toLowerCase().includes(q)));
+            elements.viewport.scrollTop = 0;
+            setupVirtualScroll();
+        });
 
         elements.songList.addEventListener('change', e => {
             if (e.target.classList.contains('song-checkbox')) {
@@ -155,33 +225,37 @@
         });
 
         elements.selectAll.addEventListener('change', e => {
-            document.querySelectorAll('.song-checkbox').forEach(cb => {
-                cb.checked = e.target.checked;
-                const sid = parseInt(cb.dataset.id);
-                if (e.target.checked) selectedSongIds.add(sid); else selectedSongIds.delete(sid);
+            const isChecked = e.target.checked;
+            filteredSongs.forEach(s => {
+                if (!s.alreadyExtracted) { if (isChecked) selectedSongIds.add(s.id); else selectedSongIds.delete(s.id); }
             });
+            renderVisiblePart();
             updateSubmitButton();
         });
 
         function updateSubmitButton() {
             elements.submitBatchBtn.disabled = selectedSongIds.size === 0;
-            elements.submitBatchBtn.textContent = `加入提取队列 (${selectedSongIds.size})`;
+            elements.submitBatchBtn.innerHTML = `🚀 批量提取 (${selectedSongIds.size})`;
         }
 
         async function submitBatch() {
             const apiKey = elements.apiKey.value.trim();
+            const ids = Array.from(selectedSongIds);
+            elements.submitBatchBtn.disabled = true;
+            elements.submitBatchBtn.innerHTML = `提交中...`;
             try {
                 const res = await fetch('/api/instrumental/batch_submit', {
                     method: 'POST',
                     headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ song_ids: Array.from(selectedSongIds) })
+                    body: JSON.stringify({ song_ids: ids })
                 });
                 const json = await res.json();
-                showMsg(Utils.successAlert(json.message));
+                Utils.displayResult(elements.messageArea, Utils.successAlert(json.message));
                 selectedSongIds.clear();
-                document.querySelectorAll('.song-checkbox').forEach(cb => cb.checked = false);
+                elements.selectAll.checked = false;
+                renderVisiblePart();
                 updateSubmitButton();
-            } catch (error) { showMsg(Utils.errorAlert(error.message)); }
+            } catch (error) { Utils.displayResult(elements.messageArea, Utils.errorAlert(error.message)); }
         }
 
         function startPollingStatus(apiKey) {
@@ -191,29 +265,13 @@
                     const res = await fetch('/api/instrumental/queue_status', { headers: { 'X-API-Key': apiKey } });
                     const json = await res.json();
                     latestStatusData = json.data || {};
-                    forceStatusUIUpdate();
+                    renderVisiblePart();
                 } catch (e) { }
             };
             poll(); pollingInterval = setInterval(poll, 3000);
         }
 
-        function forceStatusUIUpdate() {
-            for (const [songIdStr, taskInfo] of Object.entries(latestStatusData)) {
-                const songId = parseInt(songIdStr);
-                const statusCell = document.getElementById(`status-${songId}`);
-                if (!statusCell) continue;
-                const { status, message } = taskInfo;
-                let badge = `<span class="text-xs text-gray-500">${message}</span>`;
-                if (status === 'waiting') badge = `<span class="text-yellow-600 font-bold">${message}</span>`;
-                else if (status === 'processing') badge = `<span class="text-blue-600 font-bold flex items-center gap-1"><div class="loader-small"></div>处理中</span>`;
-                else if (status === 'done') badge = `<span class="text-green-600 font-bold">✓ 成功</span>`;
-                else if (status === 'failed') badge = `<span class="text-red-600 font-bold">❌ 失败</span>`;
-                statusCell.innerHTML = badge;
-            }
-        }
-
         elements.loadBtn.addEventListener('click', loadSongs);
-        elements.searchInput.addEventListener('input', filterSongs);
         elements.submitBatchBtn.addEventListener('click', submitBatch);
     </script>
 </body>
